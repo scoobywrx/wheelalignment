@@ -94,14 +94,14 @@
       color: #ccc;
     }
     .controls input {
-      width: 46px;
-      padding: 4px 4px;
+      width: 48px;
+      padding: 5px 4px;
       background: #222;
       border: 1px solid #555;
       color: #fff;
       border-radius: 4px;
       text-align: center;
-      font-size: 12px;
+      font-size: 13px;
     }
     .controls button {
       background: #00e676;
@@ -147,7 +147,7 @@
       left: 0;
       width: 100vw;
       height: 100dvh;
-      background: rgba(0, 0, 0, 0.92);
+      background: rgba(0, 0, 0, 0.94);
       z-index: 100;
       flex-direction: column;
       justify-content: center;
@@ -157,13 +157,22 @@
     }
     #landscapeErrorOverlay h2 {
       color: #ff5252;
-      font-size: 20px;
-      margin-bottom: 10px;
+      font-size: 18px;
+      margin-bottom: 8px;
     }
     #landscapeErrorOverlay p {
       color: #ccc;
-      font-size: 14px;
+      font-size: 13px;
       max-width: 280px;
+      margin-bottom: 16px;
+    }
+    #landscapeErrorOverlay button {
+      background: #333;
+      border: 1px solid #777;
+      color: #fff;
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 12px;
     }
   </style>
   <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
@@ -176,7 +185,8 @@
 
   <div id="landscapeErrorOverlay">
     <h2>⚠️ Portrait Mode Required</h2>
-    <p>Please rotate your iPhone upright to Portrait orientation to resume wheel alignment tracking.</p>
+    <p>Please hold your iPhone upright in Portrait orientation to measure wheel alignment.</p>
+    <button id="dismissLandscapeBtn">Dismiss Warning</button>
   </div>
 
   <div class="hud">
@@ -286,23 +296,22 @@
   const tareBtn = document.getElementById('tareBtn');
   const sensorBtn = document.getElementById('sensorBtn');
   const landscapeOverlay = document.getElementById('landscapeErrorOverlay');
+  const dismissLandscapeBtn = document.getElementById('dismissLandscapeBtn');
 
   let openCvReady = false;
   let stream = null;
   let isLoopRunning = false;
   let videoDevices = [];
   let currentDeviceIndex = 0;
+  let isLandscapeDismissed = false;
 
-  // IMU State: Pitch (beta) and Roll (gamma)
-  let phoneBeta = 90.0, phoneGamma = 0.0;
+  // Direct Hardware Gravity Acceleration Vector in Camera Coordinates
+  let gCam = [0.0, 9.8, 0.0];
   let isSensorActive = false;
-
-  // Tracking History for 2D Sub-pixel Corners
-  const cornerTrackMap = new Map();
 
   // Rolling Median Windows for Rock-Solid Stability
   const tagHistoryMap = new Map();
-  const WINDOW_SIZE = 25;
+  const WINDOW_SIZE = 20;
   const DEADBAND = 0.08;
 
   // Tare Offsets
@@ -314,9 +323,19 @@
   let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
   let subpixCriteria = null;
 
-  // Orientation Check
+  // Orientation Check (Resilient against on-screen keyboard opening)
   function checkOrientation() {
-    const isLandscape = window.innerWidth > window.innerHeight || Math.abs(phoneGamma) > 45;
+    if (isLandscapeDismissed) return true;
+
+    // Never trigger orientation warning when keyboard is open
+    if (document.activeElement && document.activeElement.tagName === 'INPUT') {
+      landscapeOverlay.style.display = 'none';
+      return true;
+    }
+
+    const isLandscape = (typeof window.orientation !== 'undefined' && Math.abs(window.orientation) === 90) ||
+                        (screen.orientation && screen.orientation.type && screen.orientation.type.includes('landscape'));
+
     if (isLandscape) {
       landscapeOverlay.style.display = 'flex';
       return false;
@@ -326,16 +345,23 @@
     }
   }
 
-  window.addEventListener('resize', checkOrientation);
-  window.addEventListener('orientationchange', checkOrientation);
+  dismissLandscapeBtn.onclick = () => {
+    isLandscapeDismissed = true;
+    landscapeOverlay.style.display = 'none';
+  };
 
-  // iOS Sensor Permission Trigger
+  window.addEventListener('orientationchange', () => {
+    isLandscapeDismissed = false;
+    checkOrientation();
+  });
+
+  // Explicit iOS Sensor Permission Trigger
   sensorBtn.onclick = async () => {
-    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
       try {
-        const res = await DeviceOrientationEvent.requestPermission();
+        const res = await DeviceMotionEvent.requestPermission();
         if (res === 'granted') {
-          attachSensorListeners();
+          attachMotionListeners();
         } else {
           alert('Motion sensor permission denied.');
         }
@@ -343,20 +369,26 @@
         console.warn(err);
       }
     } else {
-      attachSensorListeners();
+      attachMotionListeners();
     }
   };
 
-  function attachSensorListeners() {
-    window.addEventListener('deviceorientation', (e) => {
-      if (e.beta !== null) {
-        const rawB = e.beta || 90.0;
-        const rawG = e.gamma || 0.0;
+  function attachMotionListeners() {
+    window.addEventListener('devicemotion', (e) => {
+      const acc = e.accelerationIncludingGravity;
+      if (acc && acc.x !== null) {
+        // Direct Hardware Accelerometer Gravity Vector in Camera Coordinates
+        // Phone Portrait: +X right, +Y up, +Z out of screen
+        // Camera Frame: +X right, +Y down, +Z forward
+        const rawGx = -acc.x;
+        const rawGy = acc.y;
+        const rawGz = acc.z;
 
-        phoneBeta = phoneBeta * 0.80 + rawB * 0.20;
-        phoneGamma = phoneGamma * 0.80 + rawG * 0.20;
-
-        checkOrientation();
+        // Smooth accelerometer electronic noise
+        const alpha = 0.15;
+        gCam[0] = gCam[0] * (1 - alpha) + rawGx * alpha;
+        gCam[1] = gCam[1] * (1 - alpha) + rawGy * alpha;
+        gCam[2] = gCam[2] * (1 - alpha) + rawGz * alpha;
 
         if (!isSensorActive) {
           isSensorActive = true;
@@ -550,15 +582,6 @@
               if (!duplicate) {
                 let refinedCorners = refineCornersSubPix(grayMat, quadPts);
 
-                // 2D Temporal Corner Low-Pass Smoothing
-                if (cornerTrackMap.has(cnt)) {
-                  let prev = cornerTrackMap.get(cnt);
-                  for (let k = 0; k < 4; k++) {
-                    refinedCorners[k].x = prev[k].x * 0.75 + refinedCorners[k].x * 0.25;
-                    refinedCorners[k].y = prev[k].y * 0.75 + refinedCorners[k].y * 0.25;
-                  }
-                }
-
                 let srcQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
                   refinedCorners[0].x, refinedCorners[0].y,
                   refinedCorners[1].x, refinedCorners[1].y,
@@ -747,30 +770,22 @@
     return null;
   }
 
-  // Pure Earth-Gravity Vector Mapping in Portrait
+  // Exact Hardware-Gravity Measurement (Direct Accelerometer Vector)
   function computeGravityLockedAngles(R) {
-    const deg2rad = Math.PI / 180.0;
     const rad2deg = 180.0 / Math.PI;
 
-    // Exact Analytical Gravity Vector in Portrait Camera Coordinates
-    const b = phoneBeta * deg2rad;
-    const g = phoneGamma * deg2rad;
-
-    const gx_cam = Math.cos(b) * Math.sin(g);
-    const gy_cam = Math.sin(b);
-    const gz_cam = Math.cos(b) * Math.cos(g);
-
-    const gLen = Math.hypot(gx_cam, gy_cam, gz_cam) || 1.0;
-    const gNorm = [gx_cam / gLen, gy_cam / gLen, gz_cam / gLen];
+    // Direct Normalized Gravity Vector from Phone's MEMS Accelerometer
+    const gLen = Math.hypot(gCam[0], gCam[1], gCam[2]) || 1.0;
+    const gNorm = [gCam[0] / gLen, gCam[1] / gLen, gCam[2] / gLen];
 
     // Tag Normal in Camera Frame
     const nx = R[2], ny = R[5], nz = R[8];
 
-    // True Camber = Angle with Earth Gravity Plumb Line
+    // True Camber = Angle between Tag Normal and True Earth Gravity Plane
     const dotNG = nx * gNorm[0] + ny * gNorm[1] + nz * gNorm[2];
     const rawCamber = -Math.asin(Math.max(-1.0, Math.min(1.0, dotNG))) * rad2deg;
 
-    // True Toe = Angle relative to optical forward axis
+    // True Toe = Horizontal Angle relative to optical forward axis
     const rawToe = Math.atan2(nx, nz) * rad2deg;
 
     lastMeasuredCamber = rawCamber;
