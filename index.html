@@ -32,19 +32,19 @@
     }
     .hud {
       position: absolute;
-      top: max(12px, env(safe-area-inset-top));
+      top: max(12px, env(safe-area-inset-top, 12px));
       left: 12px;
       right: 12px;
-      background: rgba(14, 14, 14, 0.92);
+      background: rgba(14, 14, 14, 0.90);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      padding: 12px 16px;
+      padding: 12px 14px;
       border-radius: 12px;
       font-size: 13px;
       line-height: 1.4;
       z-index: 10;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
     }
     .hud-header {
       display: flex;
@@ -53,14 +53,14 @@
       margin-bottom: 4px;
     }
     .hud h1 {
-      font-size: 14px;
+      font-size: 13px;
       color: #00e676;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
     .badge {
       display: inline-block;
-      padding: 2px 7px;
+      padding: 2px 6px;
       background: #ff5252;
       color: #fff;
       font-weight: bold;
@@ -71,31 +71,38 @@
       background: #00e676;
       color: #111;
     }
-    .controls {
+    .controls-panel {
       position: absolute;
-      bottom: max(16px, env(safe-area-inset-bottom));
+      bottom: max(16px, env(safe-area-inset-bottom, 16px));
       left: 50%;
       transform: translateX(-50%);
+      width: calc(100% - 24px);
+      max-width: 380px;
       background: rgba(14, 14, 14, 0.92);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       padding: 8px 12px;
-      border-radius: 30px;
+      border-radius: 16px;
       display: flex;
-      align-items: center;
+      flex-direction: column;
       gap: 6px;
       z-index: 10;
       border: 1px solid rgba(255, 255, 255, 0.2);
       box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-      white-space: nowrap;
     }
-    .controls label {
+    .ctrl-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .ctrl-row label {
       font-size: 11px;
       color: #ccc;
     }
-    .controls input {
-      width: 44px;
-      padding: 5px 3px;
+    .ctrl-row input {
+      width: 48px;
+      padding: 4px;
       background: #222;
       border: 1px solid #555;
       color: #fff;
@@ -103,34 +110,28 @@
       text-align: center;
       font-size: 12px;
     }
-    .controls button {
+    .btn {
+      flex: 1;
       background: #00e676;
       border: none;
       color: #111;
-      padding: 7px 10px;
-      border-radius: 20px;
+      padding: 8px 6px;
+      border-radius: 10px;
       cursor: pointer;
-      font-size: 11.5px;
+      font-size: 11px;
       font-weight: bold;
+      text-align: center;
     }
-    .controls button.sensor-btn {
-      background: #ff9100;
-      color: #111;
-    }
-    .controls button.tare-btn {
-      background: #ffca28;
-      color: #111;
-    }
-    .controls button.calib-btn {
-      background: #29b6f6;
-      color: #111;
-    }
+    .btn-sensor { background: #ff9100; color: #111; }
+    .btn-tare { background: #ffca28; color: #111; }
+    .btn-calib { background: #29b6f6; color: #111; }
+    .btn-cam { background: #444; color: #fff; }
     .value-row {
       display: flex;
       justify-content: space-between;
       font-family: monospace;
       font-size: 14px;
-      margin: 4px 0;
+      margin: 3px 0;
     }
     .value-highlight {
       font-weight: bold;
@@ -138,13 +139,13 @@
       font-size: 15px;
     }
     .tag-block {
-      margin-top: 6px;
-      padding: 6px 10px;
+      margin-top: 4px;
+      padding: 6px 8px;
       background: rgba(255, 255, 255, 0.06);
       border-left: 3px solid #00e676;
       border-radius: 4px;
     }
-    #landscapeErrorOverlay {
+    #landscapeWarning {
       display: none;
       position: absolute;
       top: 0;
@@ -159,18 +160,9 @@
       text-align: center;
       padding: 24px;
     }
-    #landscapeErrorOverlay h2 {
-      color: #ff5252;
-      font-size: 18px;
-      margin-bottom: 8px;
-    }
-    #landscapeErrorOverlay p {
-      color: #ccc;
-      font-size: 13px;
-      max-width: 280px;
-      margin-bottom: 16px;
-    }
-    #landscapeErrorOverlay button {
+    #landscapeWarning h2 { color: #ff5252; font-size: 18px; margin-bottom: 8px; }
+    #landscapeWarning p { color: #ccc; font-size: 13px; margin-bottom: 16px; }
+    #landscapeWarning button {
       background: #333;
       border: 1px solid #777;
       color: #fff;
@@ -187,30 +179,35 @@
   <video id="video" playsinline muted autoplay></video>
   <canvas id="outputCanvas"></canvas>
 
-  <div id="landscapeErrorOverlay">
+  <div id="landscapeWarning">
     <h2>⚠️ Portrait Mode Required</h2>
-    <p>Please hold your iPhone upright in Portrait orientation to measure wheel alignment.</p>
-    <button id="dismissLandscapeBtn">Dismiss Warning</button>
+    <p>Please hold your iPhone upright in Portrait orientation.</p>
+    <button onclick="dismissLandscapeWarning()">Dismiss</button>
   </div>
 
   <div class="hud">
     <div class="hud-header">
-      <h1>AprilTag Wheel Alignment</h1>
-      <span id="imuStatus" class="badge">Sensor: Tap Button Below</span>
+      <h1>AprilTag Alignment</h1>
+      <span id="imuStatus" class="badge">Sensor: Inactive</span>
     </div>
     <div>Status: <span id="status" style="font-weight: bold; color: #fbc02d;">Loading OpenCV...</span></div>
-    <div id="telemetry" style="margin-top: 6px; border-top: 1px solid #333; padding-top: 4px;">
+    <div id="telemetry" style="margin-top: 4px; border-top: 1px solid #333; padding-top: 4px;">
       <i>Starting camera...</i>
     </div>
   </div>
 
-  <div class="controls">
-    <label for="tagSize">Size:</label>
-    <input type="number" id="tagSize" value="100" min="10" max="1000" step="5">
-    <button id="sensorBtn" class="sensor-btn">Sensor 🔒</button>
-    <button id="tareBtn" class="tare-btn">Tare</button>
-    <button id="calibBtn" class="calib-btn">Calib 1m</button>
-    <button id="toggleCamera">Cam 🔄</button>
+  <div class="controls-panel">
+    <div class="ctrl-row">
+      <label for="tagSize">Tag Size:</label>
+      <input type="number" id="tagSize" value="100" min="10" max="1000" step="5">
+      <span style="font-size: 11px; color:#888;">mm</span>
+      <button id="sensorBtn" class="btn btn-sensor">Enable Sensor 🔒</button>
+      <button id="tareBtn" class="btn btn-tare">Tare (Zero)</button>
+    </div>
+    <div class="ctrl-row">
+      <button id="calibBtn" class="btn btn-calib">Calib at 1.0m</button>
+      <button id="toggleCamera" class="btn btn-cam">Switch Cam 🔄</button>
+    </div>
   </div>
 </div>
 
@@ -301,47 +298,42 @@
   const tareBtn = document.getElementById('tareBtn');
   const calibBtn = document.getElementById('calibBtn');
   const sensorBtn = document.getElementById('sensorBtn');
-  const landscapeOverlay = document.getElementById('landscapeErrorOverlay');
-  const dismissLandscapeBtn = document.getElementById('dismissLandscapeBtn');
+  const landscapeOverlay = document.getElementById('landscapeWarning');
 
   let openCvReady = false;
   let stream = null;
   let isLoopRunning = false;
-  let videoDevices = [];
-  let currentDeviceIndex = 0;
+  let currentFacingMode = 'environment';
   let isLandscapeDismissed = false;
 
   // Direct Hardware Gravity Acceleration Vector in Camera Coordinates
   let gCam = [0.0, 9.8, 0.0];
   let isSensorActive = false;
 
-  // User Distance Calibration Multiplier
+  // Distance Scale Factor
   let distScaleMultiplier = 1.0;
   let latestRawDistance = null;
 
-  // Rolling Median Windows for Rock-Solid Stability
+  // Stability Filter Windows
   const tagHistoryMap = new Map();
-  const WINDOW_SIZE = 20;
+  const WINDOW_SIZE = 15;
   const DEADBAND = 0.08;
 
   // Tare Offsets
   let tareOffsets = { camber: 0.0, toe: 0.0 };
   let lastMeasuredCamber = null, lastMeasuredToe = null;
 
-  // OpenCV resources
+  // OpenCV Persistent Mats
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
   let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
   let subpixCriteria = null;
 
-  // Orientation Check
   function checkOrientation() {
     if (isLandscapeDismissed) return true;
-
     if (document.activeElement && document.activeElement.tagName === 'INPUT') {
       landscapeOverlay.style.display = 'none';
       return true;
     }
-
     const isLandscape = (typeof window.orientation !== 'undefined' && Math.abs(window.orientation) === 90) ||
                         (screen.orientation && screen.orientation.type && screen.orientation.type.includes('landscape'));
 
@@ -354,16 +346,17 @@
     }
   }
 
-  dismissLandscapeBtn.onclick = () => {
+  function dismissLandscapeWarning() {
     isLandscapeDismissed = true;
     landscapeOverlay.style.display = 'none';
-  };
+  }
 
   window.addEventListener('orientationchange', () => {
     isLandscapeDismissed = false;
     checkOrientation();
   });
 
+  // Sensor Permission (iOS 13+)
   sensorBtn.onclick = async () => {
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
       try {
@@ -385,6 +378,7 @@
     window.addEventListener('devicemotion', (e) => {
       const acc = e.accelerationIncludingGravity;
       if (acc && acc.x !== null) {
+        // Direct Hardware Accelerometer Vector in Camera Coordinates
         const rawGx = -acc.x;
         const rawGy = acc.y;
         const rawGz = acc.z;
@@ -409,71 +403,42 @@
   function onOpenCvReady() {
     cv['onRuntimeInitialized'] = () => {
       openCvReady = true;
-      statusText.innerText = "Initializing Camera...";
+      statusText.innerText = "Starting Camera...";
       statusText.style.color = "#29b6f6";
-
-      subpixCriteria = new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 30, 0.01);
-      initCameraList();
+      subpixCriteria = new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 20, 0.02);
+      startCamera();
     };
   }
 
-  async function initCameraList() {
-    try {
-      const tempStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-        audio: false
-      });
-      tempStream.getTracks().forEach(t => t.stop());
-
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      videoDevices = devices.filter(d => d.kind === 'videoinput');
-
-      const backIndex = videoDevices.findIndex(d => 
-        d.label.toLowerCase().includes('back') || 
-        d.label.toLowerCase().includes('rear') || 
-        d.label.toLowerCase().includes('environment')
-      );
-      
-      currentDeviceIndex = backIndex !== -1 ? backIndex : 0;
-      startCamera();
-    } catch (err) {
-      startCamera();
-    }
-  }
-
+  // Direct, single-pass camera initialization (zero dummy stream restarts)
   async function startCamera() {
     if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach(t => t.stop());
     }
 
     try {
-      let videoConstraints = {
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        facingMode: { ideal: "environment" }
-      };
-
-      if (videoDevices.length > 0 && videoDevices[currentDeviceIndex]) {
-        videoConstraints.deviceId = { exact: videoDevices[currentDeviceIndex].deviceId };
-      }
-
       stream = await navigator.mediaDevices.getUserMedia({
-        video: videoConstraints,
+        video: {
+          facingMode: { ideal: currentFacingMode },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
         audio: false
       });
 
       video.srcObject = stream;
       await video.play();
 
-      video.onloadedmetadata = () => {
+      video.onloadeddata = () => {
         canvas.width = video.videoWidth || 640;
         canvas.height = video.videoHeight || 480;
 
         const w = canvas.width;
         const h = canvas.height;
         
-        // Exact Calibrated iPhone Wide Camera Focal Length (f = w * 0.72)
-        const focalLength = w * 0.72;
+        // Exact Calibrated iPhone Wide Camera Focal Length based on sensor max dimension
+        const maxDim = Math.max(w, h);
+        const focalLength = maxDim * 0.741;
 
         if (cameraMatrix) cameraMatrix.delete();
         cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
@@ -518,38 +483,33 @@
   }
 
   toggleCamBtn.onclick = () => {
-    if (videoDevices.length > 1) {
-      currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
-    }
+    currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
     startCamera();
   };
 
   tareBtn.onclick = () => {
     if (lastMeasuredCamber !== null) {
-      tareOffsets = {
-        camber: lastMeasuredCamber,
-        toe: lastMeasuredToe
-      };
+      tareOffsets = { camber: lastMeasuredCamber, toe: lastMeasuredToe };
       tagHistoryMap.clear();
       tareBtn.innerText = "Reset Tare";
     } else {
       tareOffsets = { camber: 0.0, toe: 0.0 };
       tagHistoryMap.clear();
-      tareBtn.innerText = "Tare";
+      tareBtn.innerText = "Tare (Zero)";
     }
   };
 
-  // 1-Click Calibration at 1.00m
   calibBtn.onclick = () => {
     if (latestRawDistance && latestRawDistance > 0.2) {
       distScaleMultiplier = 1.0 / latestRawDistance;
       calibBtn.innerText = "Calibrated ✅";
-      setTimeout(() => calibBtn.innerText = "Calib 1m", 2000);
+      setTimeout(() => calibBtn.innerText = "Calib at 1.0m", 2500);
     } else {
-      alert("Place tag in camera view before calibrating.");
+      alert("Please point camera at the tag before calibrating.");
     }
   };
 
+  // High-performance CV Loop
   function processFrame() {
     try {
       if (!checkOrientation()) {
@@ -678,18 +638,15 @@
     let peri = cv.arcLength(hull, true);
 
     let approx = new cv.Mat();
-    let bestQuad = null;
+    cv.approxPolyDP(hull, approx, 0.04 * peri, true);
 
-    for (let epsFactor = 0.03; epsFactor <= 0.12; epsFactor += 0.015) {
-      cv.approxPolyDP(hull, approx, epsFactor * peri, true);
-      if (approx.rows === 4 && cv.isContourConvex(approx)) {
-        let rawPts = [];
-        for (let j = 0; j < 4; j++) {
-          rawPts.push({ x: approx.data32S[j * 2], y: approx.data32S[j * 2 + 1] });
-        }
-        bestQuad = orderClockwise(rawPts);
-        break;
+    let bestQuad = null;
+    if (approx.rows === 4 && cv.isContourConvex(approx)) {
+      let rawPts = [];
+      for (let j = 0; j < 4; j++) {
+        rawPts.push({ x: approx.data32S[j * 2], y: approx.data32S[j * 2 + 1] });
       }
+      bestQuad = orderClockwise(rawPts);
     }
 
     hull.delete();
@@ -785,7 +742,6 @@
     return null;
   }
 
-  // Exact Hardware-Gravity Measurement (Direct Accelerometer Vector)
   function computeGravityLockedAngles(R) {
     const rad2deg = 180.0 / Math.PI;
 
@@ -794,11 +750,11 @@
 
     const nx = R[2], ny = R[5], nz = R[8];
 
-    // True Camber = Angle between Tag Normal and True Earth Gravity Plane
+    // True Camber = Angle with Earth Gravity Vector
     const dotNG = nx * gNorm[0] + ny * gNorm[1] + nz * gNorm[2];
     const rawCamber = -Math.asin(Math.max(-1.0, Math.min(1.0, dotNG))) * rad2deg;
 
-    // True Toe = Horizontal Angle relative to optical forward axis
+    // True Toe = Horizontal angle relative to optical forward axis
     const rawToe = Math.atan2(nx, nz) * rad2deg;
 
     lastMeasuredCamber = rawCamber;
