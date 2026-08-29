@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>AprilTag Wheel Alignment & Inclinometer</title>
+  <title>AprilTag Wheel Alignment</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -35,7 +35,7 @@
       top: max(12px, env(safe-area-inset-top));
       left: 12px;
       right: 12px;
-      background: rgba(12, 12, 12, 0.92);
+      background: rgba(14, 14, 14, 0.92);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       padding: 12px 16px;
@@ -76,7 +76,7 @@
       bottom: max(16px, env(safe-area-inset-bottom));
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(12, 12, 12, 0.92);
+      background: rgba(14, 14, 14, 0.92);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       padding: 8px 14px;
@@ -140,6 +140,31 @@
       border-left: 3px solid #00e676;
       border-radius: 4px;
     }
+    #landscapeErrorOverlay {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100dvh;
+      background: rgba(0, 0, 0, 0.92);
+      z-index: 100;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 24px;
+    }
+    #landscapeErrorOverlay h2 {
+      color: #ff5252;
+      font-size: 20px;
+      margin-bottom: 10px;
+    }
+    #landscapeErrorOverlay p {
+      color: #ccc;
+      font-size: 14px;
+      max-width: 280px;
+    }
   </style>
   <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
 </head>
@@ -148,6 +173,11 @@
 <div id="container">
   <video id="video" playsinline muted autoplay></video>
   <canvas id="outputCanvas"></canvas>
+
+  <div id="landscapeErrorOverlay">
+    <h2>⚠️ Portrait Mode Required</h2>
+    <p>Please rotate your iPhone upright to Portrait orientation to resume wheel alignment tracking.</p>
+  </div>
 
   <div class="hud">
     <div class="hud-header">
@@ -255,6 +285,7 @@
   const toggleCamBtn = document.getElementById('toggleCamera');
   const tareBtn = document.getElementById('tareBtn');
   const sensorBtn = document.getElementById('sensorBtn');
+  const landscapeOverlay = document.getElementById('landscapeErrorOverlay');
 
   let openCvReady = false;
   let stream = null;
@@ -262,7 +293,7 @@
   let videoDevices = [];
   let currentDeviceIndex = 0;
 
-  // IMU State: Beta (pitch) and Gamma (roll) in Portrait
+  // IMU State: Pitch (beta) and Roll (gamma)
   let phoneBeta = 90.0, phoneGamma = 0.0;
   let isSensorActive = false;
 
@@ -271,7 +302,7 @@
 
   // Rolling Median Windows for Rock-Solid Stability
   const tagHistoryMap = new Map();
-  const WINDOW_SIZE = 20;
+  const WINDOW_SIZE = 25;
   const DEADBAND = 0.08;
 
   // Tare Offsets
@@ -282,6 +313,21 @@
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
   let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
   let subpixCriteria = null;
+
+  // Orientation Check
+  function checkOrientation() {
+    const isLandscape = window.innerWidth > window.innerHeight || Math.abs(phoneGamma) > 45;
+    if (isLandscape) {
+      landscapeOverlay.style.display = 'flex';
+      return false;
+    } else {
+      landscapeOverlay.style.display = 'none';
+      return true;
+    }
+  }
+
+  window.addEventListener('resize', checkOrientation);
+  window.addEventListener('orientationchange', checkOrientation);
 
   // iOS Sensor Permission Trigger
   sensorBtn.onclick = async () => {
@@ -309,6 +355,8 @@
 
         phoneBeta = phoneBeta * 0.80 + rawB * 0.20;
         phoneGamma = phoneGamma * 0.80 + rawG * 0.20;
+
+        checkOrientation();
 
         if (!isSensorActive) {
           isSensorActive = true;
@@ -457,6 +505,11 @@
 
   function processFrame() {
     try {
+      if (!checkOrientation()) {
+        requestAnimationFrame(processFrame);
+        return;
+      }
+
       if (video.readyState === video.HAVE_ENOUGH_DATA && openCvReady && srcMat) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
@@ -497,6 +550,15 @@
               if (!duplicate) {
                 let refinedCorners = refineCornersSubPix(grayMat, quadPts);
 
+                // 2D Temporal Corner Low-Pass Smoothing
+                if (cornerTrackMap.has(cnt)) {
+                  let prev = cornerTrackMap.get(cnt);
+                  for (let k = 0; k < 4; k++) {
+                    refinedCorners[k].x = prev[k].x * 0.75 + refinedCorners[k].x * 0.25;
+                    refinedCorners[k].y = prev[k].y * 0.75 + refinedCorners[k].y * 0.25;
+                  }
+                }
+
                 let srcQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
                   refinedCorners[0].x, refinedCorners[0].y,
                   refinedCorners[1].x, refinedCorners[1].y,
@@ -518,16 +580,6 @@
                     refinedCorners[(2 + r) % 4],
                     refinedCorners[(3 + r) % 4]
                   ];
-
-                  // Smooth 2D corners temporally
-                  if (cornerTrackMap.has(result.id)) {
-                    let prev = cornerTrackMap.get(result.id);
-                    for (let k = 0; k < 4; k++) {
-                      trueCorners[k].x = prev[k].x * 0.70 + trueCorners[k].x * 0.30;
-                      trueCorners[k].y = prev[k].y * 0.70 + trueCorners[k].y * 0.30;
-                    }
-                  }
-                  cornerTrackMap.set(result.id, trueCorners);
 
                   detectedTags.push({
                     id: result.id,
@@ -695,36 +747,30 @@
     return null;
   }
 
-  // Exact Sensor-to-Landscape-Buffer Coordinate Mapping
+  // Pure Earth-Gravity Vector Mapping in Portrait
   function computeGravityLockedAngles(R) {
     const deg2rad = Math.PI / 180.0;
     const rad2deg = 180.0 / Math.PI;
 
-    // 1. Compute Exact Gravity Vector in Camera Buffer (1280x720) Coordinates
+    // Exact Analytical Gravity Vector in Portrait Camera Coordinates
     const b = phoneBeta * deg2rad;
     const g = phoneGamma * deg2rad;
 
-    // In Phone Screen Frame (Portrait):
-    const gx_screen = Math.sin(g);
-    const gy_screen = -Math.sin(b) * Math.cos(g);
-    const gz_screen = -Math.cos(b) * Math.cos(g);
+    const gx_cam = Math.cos(b) * Math.sin(g);
+    const gy_cam = Math.sin(b);
+    const gz_cam = Math.cos(b) * Math.cos(g);
 
-    // Transform Screen -> Rear Camera Buffer: X_buf = -Y_screen, Y_buf = -X_screen, Z_buf = -Z_screen
-    const gx_buf = -gy_screen;
-    const gy_buf = -gx_screen;
-    const gz_buf = -gz_screen;
+    const gLen = Math.hypot(gx_cam, gy_cam, gz_cam) || 1.0;
+    const gNorm = [gx_cam / gLen, gy_cam / gLen, gz_cam / gLen];
 
-    const gLen = Math.hypot(gx_buf, gy_buf, gz_buf) || 1.0;
-    const gNorm = [gx_buf / gLen, gy_buf / gLen, gz_buf / gLen];
-
-    // 2. Tag Normal in Buffer
+    // Tag Normal in Camera Frame
     const nx = R[2], ny = R[5], nz = R[8];
 
-    // --- TRUE CAMBER: Angle of tag face normal with the horizontal plane ---
+    // True Camber = Angle with Earth Gravity Plumb Line
     const dotNG = nx * gNorm[0] + ny * gNorm[1] + nz * gNorm[2];
     const rawCamber = -Math.asin(Math.max(-1.0, Math.min(1.0, dotNG))) * rad2deg;
 
-    // --- TRUE TOE: Angle relative to optical forward axis ---
+    // True Toe = Angle relative to optical forward axis
     const rawToe = Math.atan2(nx, nz) * rad2deg;
 
     lastMeasuredCamber = rawCamber;
@@ -849,7 +895,7 @@
       R.delete();
     });
 
-    // Dual-Tag Differential Alignment Mode (If 2 tags are in view)
+    // Dual-Tag Differential Alignment Mode
     if (solvedTags.length === 2) {
       const refTag = solvedTags.find(t => t.id === 0) || solvedTags[0];
       const wheelTag = solvedTags.find(t => t.id !== refTag.id);
@@ -857,7 +903,6 @@
       const R_ref = refTag.R_data;
       const R_wh = wheelTag.R_data;
 
-      // R_rel = R_ref^T * R_wh
       const R_rel = new Array(9);
       for (let r = 0; r < 3; r++) {
         for (let c = 0; c < 3; c++) {
@@ -873,7 +918,7 @@
       telemetryHtml = `
         <div class="tag-block" style="border-left-color: #ffca28; background: rgba(255,202,40,0.1);">
           <b style="color: #ffca28;">Dual-Tag Differential Alignment</b>
-          <div class="value-row"><span>Wheel (Tag #${wheelTag.id}) vs Ref (Tag #${refTag.id}):</span></div>
+          <div class="value-row"><span>Wheel (#${wheelTag.id}) vs Ref (#${refTag.id}):</span></div>
           <div class="value-row"><span>Relative Camber:</span> <span class="value-highlight" style="color:#ffca28;">${relCamber}°</span></div>
           <div class="value-row"><span>Relative Toe &nbsp; :</span> <span class="value-highlight" style="color:#ffca28;">${relToe}°</span></div>
         </div>
