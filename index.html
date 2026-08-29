@@ -35,7 +35,7 @@
       top: max(12px, env(safe-area-inset-top));
       left: 12px;
       right: 12px;
-      background: rgba(12, 12, 12, 0.90);
+      background: rgba(12, 12, 12, 0.92);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       padding: 12px 16px;
@@ -76,7 +76,7 @@
       bottom: max(16px, env(safe-area-inset-bottom));
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(12, 12, 12, 0.90);
+      background: rgba(12, 12, 12, 0.92);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       padding: 8px 14px;
@@ -125,13 +125,13 @@
       display: flex;
       justify-content: space-between;
       font-family: monospace;
-      font-size: 13.5px;
-      margin: 3px 0;
+      font-size: 14px;
+      margin: 4px 0;
     }
     .value-highlight {
       font-weight: bold;
       color: #00e676;
-      font-size: 14px;
+      font-size: 15px;
     }
     .tag-block {
       margin-top: 6px;
@@ -263,26 +263,34 @@
   let videoDevices = [];
   let currentDeviceIndex = 0;
 
-  // IMU Hardware State (iOS Euler angles with Low-Pass Smoothing)
-  let rawAlpha = 0.0, rawBeta = 90.0, rawGamma = 0.0;
-  let phoneAlpha = 0.0, phoneBeta = 90.0, phoneGamma = 0.0;
+  // IMU Hardware State: Strict Pitch/Roll Gravity Inclinometer (NO compass/alpha)
+  let phoneBeta = 90.0, phoneGamma = 0.0;
   let isSensorActive = false;
 
-  // Temporal Smoothing Filter for Optical Measurements
-  let filteredCamber = null;
-  let filteredToe = null;
-  let filteredDist = null;
+  // Temporal 2D Corner Tracking Filter
+  let prevTrackedCorners = null;
+
+  // Rolling Median Filter History Windows (20 frames)
+  const camberHistory = [];
+  const toeHistory = [];
+  const distHistory = [];
+  const WINDOW_SIZE = 20;
+
+  // Hysteresis Deadband Locked Values
+  let lockedCamber = null;
+  let lockedToe = null;
+  let lockedDist = null;
 
   // Tare Offsets
   let tareOffsets = { camber: 0.0, toe: 0.0 };
-  let lastAngles = null;
+  let lastRawAngles = null;
 
   // OpenCV resources
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
   let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
   let subpixCriteria = null;
 
-  // Explicit iOS Sensor Permission Trigger
+  // iOS Sensor Permission Trigger
   sensorBtn.onclick = async () => {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       try {
@@ -303,15 +311,13 @@
   function attachSensorListeners() {
     window.addEventListener('deviceorientation', (e) => {
       if (e.beta !== null) {
-        rawAlpha = e.alpha || 0.0;
-        rawBeta = e.beta || 90.0;
-        rawGamma = e.gamma || 0.0;
+        // Read strictly gravity pitch (beta) and roll (gamma) - Zero compass interference
+        const rawB = e.beta || 90.0;
+        const rawG = e.gamma || 0.0;
 
-        // Smooth sensor noise
-        const sAlpha = 0.20;
-        phoneAlpha = phoneAlpha * (1 - sAlpha) + rawAlpha * sAlpha;
-        phoneBeta  = phoneBeta  * (1 - sAlpha) + rawBeta  * sAlpha;
-        phoneGamma = phoneGamma * (1 - sAlpha) + rawGamma * sAlpha;
+        // Smooth accelerometer thermal noise
+        phoneBeta = phoneBeta * 0.85 + rawB * 0.15;
+        phoneGamma = phoneGamma * 0.85 + rawG * 0.15;
 
         if (!isSensorActive) {
           isSensorActive = true;
@@ -331,9 +337,7 @@
       statusText.innerText = "Initializing Camera...";
       statusText.style.color = "#29b6f6";
 
-      // Sub-pixel corner optimization criteria (max 30 iterations or 0.01 precision)
       subpixCriteria = new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 30, 0.01);
-
       initCameraList();
     };
   }
@@ -393,7 +397,7 @@
         const w = canvas.width;
         const h = canvas.height;
         
-        // Calibrated iPhone Camera Pinhole Model
+        // Calibrated iPhone Wide Pinhole Model
         const focalLength = w * 0.82;
 
         if (cameraMatrix) cameraMatrix.delete();
@@ -446,19 +450,23 @@
   };
 
   tareBtn.onclick = () => {
-    if (lastAngles) {
+    if (lastRawAngles) {
       tareOffsets = {
-        camber: lastAngles.rawCamber,
-        toe: lastAngles.rawToe
+        camber: lastRawAngles.camber,
+        toe: lastRawAngles.toe
       };
-      // Reset filter for instant response
-      filteredCamber = null;
-      filteredToe = null;
+      // Flush buffers for instant update
+      camberHistory.length = 0;
+      toeHistory.length = 0;
+      lockedCamber = 0.0;
+      lockedToe = 0.0;
       tareBtn.innerText = "Reset Tare";
     } else {
       tareOffsets = { camber: 0.0, toe: 0.0 };
-      filteredCamber = null;
-      filteredToe = null;
+      camberHistory.length = 0;
+      toeHistory.length = 0;
+      lockedCamber = null;
+      lockedToe = null;
       tareBtn.innerText = "Tare";
     }
   };
@@ -503,8 +511,19 @@
               }
 
               if (!duplicate) {
-                // Sub-Pixel Corner Refinement for floating-point accuracy
                 let refinedCorners = refineCornersSubPix(grayMat, quadPts);
+
+                // 2D Temporal Corner Low-Pass Smoothing (rejection of optical single-pixel jitter)
+                if (prevTrackedCorners !== null) {
+                  const distMoved = Math.hypot(refinedCorners[0].x - prevTrackedCorners[0].x, refinedCorners[0].y - prevTrackedCorners[0].y);
+                  if (distMoved < 15.0) { // Same tag tracking
+                    for (let k = 0; k < 4; k++) {
+                      refinedCorners[k].x = prevTrackedCorners[k].x * 0.70 + refinedCorners[k].x * 0.30;
+                      refinedCorners[k].y = prevTrackedCorners[k].y * 0.70 + refinedCorners[k].y * 0.30;
+                    }
+                  }
+                }
+                prevTrackedCorners = refinedCorners;
 
                 let srcQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
                   refinedCorners[0].x, refinedCorners[0].y,
@@ -554,7 +573,6 @@
     }
   }
 
-  // Refines integer corner points down to sub-pixel floating point precision
   function refineCornersSubPix(gray, pts) {
     try {
       let cornerMat = cv.matFromArray(4, 1, cv.CV_32FC2, [
@@ -695,71 +713,85 @@
     return null;
   }
 
-  function computeWorldReferencedPose(R_tag_cam) {
+  // Pure Earth-Gravity Plumb Alignment (Decoupled from Compass Drift)
+  function computeGravityLockedAngles(R) {
     const deg2rad = Math.PI / 180.0;
     const rad2deg = 180.0 / Math.PI;
 
-    const a = phoneAlpha * deg2rad;
+    // 1. Construct Exact Gravity Vector in Camera Coordinates (Pitch & Roll only)
     const b = phoneBeta * deg2rad;
     const g = phoneGamma * deg2rad;
 
-    const ca = Math.cos(a), sa = Math.sin(a);
-    const cb = Math.cos(b), sb = Math.sin(b);
-    const cg = Math.cos(g), sg = Math.sin(g);
+    const gx_phone = Math.sin(g);
+    const gy_phone = -Math.sin(b) * Math.cos(g);
+    const gz_phone = Math.cos(b) * Math.cos(g);
 
-    const R_pw = [
-      ca*cg - sa*sb*sg, -sa*cb,  ca*sg + sa*sb*cg,
-      sa*cg + ca*sb*sg,  ca*cb,  sa*sg - ca*sb*cg,
-         -cb*sg,            sb,       cb*cg
-    ];
+    // Rear camera frame: X right, Y down, Z forward
+    const gx_cam = gx_phone;
+    const gy_cam = -gy_phone;
+    const gz_cam = -gz_phone;
 
-    const R_cw = [
-       R_pw[0], -R_pw[1], -R_pw[2],
-       R_pw[3], -R_pw[4], -R_pw[5],
-       R_pw[6], -R_pw[7], -R_pw[8]
-    ];
+    const gLen = Math.hypot(gx_cam, gy_cam, gz_cam) || 1.0;
+    const gNorm = [gx_cam / gLen, gy_cam / gLen, gz_cam / gLen];
 
-    const R = R_tag_cam;
-    const R_tw = new Array(9);
-    for (let r = 0; r < 3; r++) {
-      for (let c = 0; c < 3; c++) {
-        R_tw[r*3 + c] = R_cw[r*3 + 0] * R[0*3 + c] +
-                        R_cw[r*3 + 1] * R[1*3 + c] +
-                        R_cw[r*3 + 2] * R[2*3 + c];
+    // 2. Tag Normal in Camera Frame
+    const nx = R[2], ny = R[5], nz = R[8];
+
+    // --- CAMBER: Tilt relative to Earth's Vertical Plumb Line ---
+    // A plumb vertical wheel face has dot(n, g) = 0.
+    const dotNG = nx * gNorm[0] + ny * gNorm[1] + nz * gNorm[2];
+    const rawCamber = -Math.asin(Math.max(-1.0, Math.min(1.0, dotNG))) * rad2deg;
+
+    // --- TOE: Horizontal steer angle relative to camera axis ---
+    const rawToe = Math.atan2(nx, nz) * rad2deg;
+
+    lastRawAngles = { camber: rawCamber, toe: rawToe };
+
+    const taredCamber = rawCamber - tareOffsets.camber;
+    const taredToe = rawToe - tareOffsets.toe;
+
+    // 3. Multi-Stage Filtering: 20-frame Rolling Median Window
+    camberHistory.push(taredCamber);
+    if (camberHistory.length > WINDOW_SIZE) camberHistory.shift();
+
+    toeHistory.push(taredToe);
+    if (toeHistory.length > WINDOW_SIZE) toeHistory.shift();
+
+    const medianCamber = getMedian(camberHistory);
+    const medianToe = getMedian(toeHistory);
+
+    // 4. Hysteresis Deadband Filter (locks micro-jitter under 0.08 deg)
+    const DEADBAND = 0.08;
+
+    if (lockedCamber === null) {
+      lockedCamber = medianCamber;
+      lockedToe = medianToe;
+    } else {
+      if (Math.abs(medianCamber - lockedCamber) > DEADBAND) {
+        lockedCamber = lockedCamber * 0.60 + medianCamber * 0.40;
+      }
+      if (Math.abs(medianToe - lockedToe) > DEADBAND) {
+        lockedToe = lockedToe * 0.60 + medianToe * 0.40;
       }
     }
 
-    const nx = R_tw[2], ny = R_tw[5], nz = R_tw[8];
-
-    // Raw physical values
-    const rawCamber = Math.asin(Math.max(-1, Math.min(1, nz))) * rad2deg;
-    const rawToe = Math.atan2(nx, ny) * rad2deg;
-
-    const instantCamber = rawCamber - tareOffsets.camber;
-    const instantToe = rawToe - tareOffsets.toe;
-
-    // Adaptive Exponential Moving Average (EMA) Noise Filter
-    const filterAlpha = 0.12; // Smooth steady reading
-    if (filteredCamber === null) {
-      filteredCamber = instantCamber;
-      filteredToe = instantToe;
-    } else {
-      filteredCamber = filteredCamber * (1 - filterAlpha) + instantCamber * filterAlpha;
-      filteredToe = filteredToe * (1 - filterAlpha) + instantToe * filterAlpha;
-    }
-
     return {
-      camber: filteredCamber.toFixed(2),
-      toe: filteredToe.toFixed(2),
-      rawCamber,
-      rawToe
+      camber: lockedCamber.toFixed(1),
+      toe: lockedToe.toFixed(1)
     };
+  }
+
+  function getMedian(arr) {
+    if (arr.length === 0) return 0.0;
+    const s = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 !== 0 ? s[mid] : (s[mid - 1] + s[mid]) / 2.0;
   }
 
   function solveAndDrawTags(tags) {
     if (tags.length === 0) {
       telemetryEl.innerHTML = '<i>Searching for AprilTag 36h11...</i>';
-      lastAngles = null;
+      prevTrackedCorners = null;
       return;
     }
 
@@ -791,26 +823,29 @@
       let R = new cv.Mat();
       cv.Rodrigues(rvec, R);
 
-      const angles = computeWorldReferencedPose(R.data64F);
-      lastAngles = angles;
+      const angles = computeGravityLockedAngles(R.data64F);
 
       const rawDist = Math.hypot(tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]);
-      if (filteredDist === null) filteredDist = rawDist;
-      else filteredDist = filteredDist * 0.85 + rawDist * 0.15;
+      distHistory.push(rawDist);
+      if (distHistory.length > WINDOW_SIZE) distHistory.shift();
+      const medianDist = getMedian(distHistory);
+      if (lockedDist === null || Math.abs(medianDist - lockedDist) > 0.02) {
+        lockedDist = lockedDist === null ? medianDist : (lockedDist * 0.8 + medianDist * 0.2);
+      }
 
       const centerX = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
       const centerY = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
 
       drawTagOutline(c);
       draw3DAxes(rvec, tvec, s * 0.75);
-      drawOnScreenLabels(centerX, centerY, tag.id, angles, filteredDist);
+      drawOnScreenLabels(centerX, centerY, tag.id, angles, lockedDist);
 
       telemetryHtml += `
         <div class="tag-block">
           <b style="color: #00e676;">Tag ID #${tag.id}</b>
           <div class="value-row"><span>True Camber (Vertical):</span> <span class="value-highlight">${angles.camber}°</span></div>
           <div class="value-row"><span>True Toe (Steer) &nbsp;&nbsp;&nbsp;:</span> <span class="value-highlight">${angles.toe}°</span></div>
-          <div class="value-row"><span>Distance &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</span> <span>${filteredDist.toFixed(2)} m</span></div>
+          <div class="value-row"><span>Distance &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</span> <span>${lockedDist.toFixed(2)} m</span></div>
         </div>
       `;
 
