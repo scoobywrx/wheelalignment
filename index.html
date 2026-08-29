@@ -101,7 +101,7 @@
       color: #ccc;
     }
     .ctrl-row input {
-      width: 48px;
+      width: 46px;
       padding: 4px;
       background: #222;
       border: 1px solid #555;
@@ -122,9 +122,16 @@
       font-weight: bold;
       text-align: center;
     }
+    .btn-small {
+      flex: none;
+      width: 28px;
+      padding: 6px 0;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+    }
     .btn-sensor { background: #ff9100; color: #111; }
     .btn-tare { background: #ffca28; color: #111; }
-    .btn-calib { background: #29b6f6; color: #111; }
     .btn-cam { background: #444; color: #fff; }
     .value-row {
       display: flex;
@@ -198,14 +205,17 @@
 
   <div class="controls-panel">
     <div class="ctrl-row">
-      <label for="tagSize">Tag Size:</label>
+      <label for="tagSize">Size:</label>
       <input type="number" id="tagSize" value="100" min="10" max="1000" step="5">
       <span style="font-size: 11px; color:#888;">mm</span>
       <button id="sensorBtn" class="btn btn-sensor">Enable Sensor 🔒</button>
       <button id="tareBtn" class="btn btn-tare">Tare (Zero)</button>
     </div>
     <div class="ctrl-row">
-      <button id="calibBtn" class="btn btn-calib">Calib at 1.0m</button>
+      <span style="font-size: 11px; color:#ccc;">Dist Trim:</span>
+      <button id="distMinusBtn" class="btn btn-small">-</button>
+      <span id="distTrimLabel" style="font-size: 11px; font-family: monospace; color:#00e676; min-width: 35px; text-align: center;">1.00x</span>
+      <button id="distPlusBtn" class="btn btn-small">+</button>
       <button id="toggleCamera" class="btn btn-cam">Switch Cam 🔄</button>
     </div>
   </div>
@@ -296,7 +306,9 @@
   const tagSizeInput = document.getElementById('tagSize');
   const toggleCamBtn = document.getElementById('toggleCamera');
   const tareBtn = document.getElementById('tareBtn');
-  const calibBtn = document.getElementById('calibBtn');
+  const distMinusBtn = document.getElementById('distMinusBtn');
+  const distPlusBtn = document.getElementById('distPlusBtn');
+  const distTrimLabel = document.getElementById('distTrimLabel');
   const sensorBtn = document.getElementById('sensorBtn');
   const landscapeOverlay = document.getElementById('landscapeWarning');
 
@@ -306,24 +318,21 @@
   let currentFacingMode = 'environment';
   let isLandscapeDismissed = false;
 
-  // Direct Hardware Gravity Acceleration Vector in Camera Coordinates
+  // Direct Hardware Gravity Vector in Camera Coordinates
   let gCam = [0.0, 9.8, 0.0];
   let isSensorActive = false;
 
-  // Distance Scale Factor
-  let distScaleMultiplier = 1.0;
-  let latestRawDistance = null;
+  // Distance User Trim Multiplier (defaults to exact 1.00)
+  let distTrimFactor = 1.00;
 
-  // Stability Filter Windows
-  const tagHistoryMap = new Map();
-  const WINDOW_SIZE = 15;
-  const DEADBAND = 0.08;
+  // Filter States (Smooth EMA with 100ms step response)
+  const tagFilterMap = new Map();
 
   // Tare Offsets
   let tareOffsets = { camber: 0.0, toe: 0.0 };
   let lastMeasuredCamber = null, lastMeasuredToe = null;
 
-  // OpenCV Persistent Mats
+  // Persistent OpenCV Mats
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
   let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
 
@@ -377,11 +386,12 @@
     window.addEventListener('devicemotion', (e) => {
       const acc = e.accelerationIncludingGravity;
       if (acc && acc.x !== null) {
+        // Direct Hardware Accelerometer Vector in Camera Coordinates
         const rawGx = -acc.x;
         const rawGy = acc.y;
         const rawGz = acc.z;
 
-        const alpha = 0.15;
+        const alpha = 0.20;
         gCam[0] = gCam[0] * (1 - alpha) + rawGx * alpha;
         gCam[1] = gCam[1] * (1 - alpha) + rawGy * alpha;
         gCam[2] = gCam[2] * (1 - alpha) + rawGz * alpha;
@@ -407,7 +417,6 @@
     };
   }
 
-  // Reliable, direct camera initialization
   async function startCamera() {
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
@@ -425,7 +434,6 @@
 
       video.srcObject = stream;
       
-      // Wait for video to have metadata ready
       await new Promise((resolve) => {
         if (video.readyState >= 2) {
           resolve();
@@ -441,9 +449,9 @@
       const w = canvas.width;
       const h = canvas.height;
       
-      // Exact Calibrated Focal Length based on sensor maximum dimension
+      // Calibrated iPhone Video Focal Length: f = max(w, h) * 0.461
       const maxDim = Math.max(w, h);
-      const focalLength = maxDim * 0.741;
+      const focalLength = maxDim * 0.4608;
 
       if (cameraMatrix) cameraMatrix.delete();
       cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
@@ -494,25 +502,26 @@
   tareBtn.onclick = () => {
     if (lastMeasuredCamber !== null) {
       tareOffsets = { camber: lastMeasuredCamber, toe: lastMeasuredToe };
-      tagHistoryMap.clear();
+      tagFilterMap.clear();
       tareBtn.innerText = "Reset Tare";
     } else {
       tareOffsets = { camber: 0.0, toe: 0.0 };
-      tagHistoryMap.clear();
+      tagFilterMap.clear();
       tareBtn.innerText = "Tare (Zero)";
     }
   };
 
-  calibBtn.onclick = () => {
-    if (latestRawDistance && latestRawDistance > 0.2) {
-      distScaleMultiplier = 1.0 / latestRawDistance;
-      calibBtn.innerText = "Calibrated ✅";
-      setTimeout(() => calibBtn.innerText = "Calib at 1.0m", 2500);
-    } else {
-      alert("Please point camera at the tag before calibrating.");
-    }
+  distMinusBtn.onclick = () => {
+    distTrimFactor = Math.max(0.5, distTrimFactor - 0.02);
+    distTrimLabel.innerText = distTrimFactor.toFixed(2) + "x";
   };
 
+  distPlusBtn.onclick = () => {
+    distTrimFactor = Math.min(2.0, distTrimFactor + 0.02);
+    distTrimLabel.innerText = distTrimFactor.toFixed(2) + "x";
+  };
+
+  // High-performance CV Loop
   function processFrame() {
     try {
       if (!checkOrientation()) {
@@ -740,53 +749,27 @@
     return { rawCamber: taredCamber, rawToe: taredToe };
   }
 
-  function getMedian(arr) {
-    if (arr.length === 0) return 0.0;
-    const s = [...arr].sort((a, b) => a - b);
-    const mid = Math.floor(s.length / 2);
-    return s.length % 2 !== 0 ? s[mid] : (s[mid - 1] + s[mid]) / 2.0;
-  }
-
+  // Fast Exponential Moving Average (100ms step response, zero lag, smooth 0.1 deg readout)
   function filterAngles(tagId, rawCamber, rawToe, rawDist) {
-    if (!tagHistoryMap.has(tagId)) {
-      tagHistoryMap.set(tagId, {
-        camberHist: [],
-        toeHist: [],
-        distHist: [],
-        lockedCamber: rawCamber,
-        lockedToe: rawToe,
-        lockedDist: rawDist
+    if (!tagFilterMap.has(tagId)) {
+      tagFilterMap.set(tagId, {
+        camber: rawCamber,
+        toe: rawToe,
+        dist: rawDist
       });
     }
 
-    const state = tagHistoryMap.get(tagId);
-    state.camberHist.push(rawCamber);
-    if (state.camberHist.length > WINDOW_SIZE) state.camberHist.shift();
+    const state = tagFilterMap.get(tagId);
+    const alpha = 0.35; // Fast settling
 
-    state.toeHist.push(rawToe);
-    if (state.toeHist.length > WINDOW_SIZE) state.toeHist.shift();
-
-    state.distHist.push(rawDist);
-    if (state.distHist.length > WINDOW_SIZE) state.distHist.shift();
-
-    const medC = getMedian(state.camberHist);
-    const medT = getMedian(state.toeHist);
-    const medD = getMedian(state.distHist);
-
-    if (Math.abs(medC - state.lockedCamber) > DEADBAND) {
-      state.lockedCamber = state.lockedCamber * 0.60 + medC * 0.40;
-    }
-    if (Math.abs(medT - state.lockedToe) > DEADBAND) {
-      state.lockedToe = state.lockedToe * 0.60 + medT * 0.40;
-    }
-    if (Math.abs(medD - state.lockedDist) > 0.02) {
-      state.lockedDist = state.lockedDist * 0.80 + medD * 0.20;
-    }
+    state.camber = state.camber * (1 - alpha) + rawCamber * alpha;
+    state.toe    = state.toe    * (1 - alpha) + rawToe * alpha;
+    state.dist   = state.dist   * (1 - alpha) + rawDist * alpha;
 
     return {
-      camber: state.lockedCamber.toFixed(1),
-      toe: state.lockedToe.toFixed(1),
-      dist: state.lockedDist.toFixed(2)
+      camber: state.camber.toFixed(1),
+      toe: state.toe.toFixed(1),
+      dist: state.dist.toFixed(2)
     };
   }
 
@@ -826,8 +809,7 @@
       cv.Rodrigues(rvec, R);
 
       const rawDist = Math.hypot(tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]);
-      latestRawDistance = rawDist;
-      const calibratedDist = rawDist * distScaleMultiplier;
+      const calibratedDist = rawDist * distTrimFactor;
 
       const rawAngles = computeGravityLockedAngles(R.data64F);
       const filtered = filterAngles(tag.id, rawAngles.rawCamber, rawAngles.rawToe, calibratedDist);
