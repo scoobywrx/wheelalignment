@@ -79,11 +79,11 @@
       background: rgba(14, 14, 14, 0.92);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      padding: 8px 14px;
+      padding: 8px 12px;
       border-radius: 30px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       z-index: 10;
       border: 1px solid rgba(255, 255, 255, 0.2);
       box-shadow: 0 4px 20px rgba(0,0,0,0.6);
@@ -94,23 +94,23 @@
       color: #ccc;
     }
     .controls input {
-      width: 48px;
-      padding: 5px 4px;
+      width: 44px;
+      padding: 5px 3px;
       background: #222;
       border: 1px solid #555;
       color: #fff;
       border-radius: 4px;
       text-align: center;
-      font-size: 13px;
+      font-size: 12px;
     }
     .controls button {
       background: #00e676;
       border: none;
       color: #111;
-      padding: 7px 12px;
+      padding: 7px 10px;
       border-radius: 20px;
       cursor: pointer;
-      font-size: 12px;
+      font-size: 11.5px;
       font-weight: bold;
     }
     .controls button.sensor-btn {
@@ -119,6 +119,10 @@
     }
     .controls button.tare-btn {
       background: #ffca28;
+      color: #111;
+    }
+    .controls button.calib-btn {
+      background: #29b6f6;
       color: #111;
     }
     .value-row {
@@ -201,10 +205,11 @@
   </div>
 
   <div class="controls">
-    <label for="tagSize">Size(mm):</label>
+    <label for="tagSize">Size:</label>
     <input type="number" id="tagSize" value="100" min="10" max="1000" step="5">
-    <button id="sensorBtn" class="sensor-btn">Enable Sensor 🔒</button>
+    <button id="sensorBtn" class="sensor-btn">Sensor 🔒</button>
     <button id="tareBtn" class="tare-btn">Tare</button>
+    <button id="calibBtn" class="calib-btn">Calib 1m</button>
     <button id="toggleCamera">Cam 🔄</button>
   </div>
 </div>
@@ -294,6 +299,7 @@
   const tagSizeInput = document.getElementById('tagSize');
   const toggleCamBtn = document.getElementById('toggleCamera');
   const tareBtn = document.getElementById('tareBtn');
+  const calibBtn = document.getElementById('calibBtn');
   const sensorBtn = document.getElementById('sensorBtn');
   const landscapeOverlay = document.getElementById('landscapeErrorOverlay');
   const dismissLandscapeBtn = document.getElementById('dismissLandscapeBtn');
@@ -309,6 +315,10 @@
   let gCam = [0.0, 9.8, 0.0];
   let isSensorActive = false;
 
+  // User Distance Calibration Multiplier
+  let distScaleMultiplier = 1.0;
+  let latestRawDistance = null;
+
   // Rolling Median Windows for Rock-Solid Stability
   const tagHistoryMap = new Map();
   const WINDOW_SIZE = 20;
@@ -323,11 +333,10 @@
   let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
   let subpixCriteria = null;
 
-  // Orientation Check (Resilient against on-screen keyboard opening)
+  // Orientation Check
   function checkOrientation() {
     if (isLandscapeDismissed) return true;
 
-    // Never trigger orientation warning when keyboard is open
     if (document.activeElement && document.activeElement.tagName === 'INPUT') {
       landscapeOverlay.style.display = 'none';
       return true;
@@ -355,7 +364,6 @@
     checkOrientation();
   });
 
-  // Explicit iOS Sensor Permission Trigger
   sensorBtn.onclick = async () => {
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
       try {
@@ -377,14 +385,10 @@
     window.addEventListener('devicemotion', (e) => {
       const acc = e.accelerationIncludingGravity;
       if (acc && acc.x !== null) {
-        // Direct Hardware Accelerometer Gravity Vector in Camera Coordinates
-        // Phone Portrait: +X right, +Y up, +Z out of screen
-        // Camera Frame: +X right, +Y down, +Z forward
         const rawGx = -acc.x;
         const rawGy = acc.y;
         const rawGz = acc.z;
 
-        // Smooth accelerometer electronic noise
         const alpha = 0.15;
         gCam[0] = gCam[0] * (1 - alpha) + rawGx * alpha;
         gCam[1] = gCam[1] * (1 - alpha) + rawGy * alpha;
@@ -468,8 +472,8 @@
         const w = canvas.width;
         const h = canvas.height;
         
-        // Calibrated Pinhole Focal Length
-        const focalLength = w * 0.82;
+        // Exact Calibrated iPhone Wide Camera Focal Length (f = w * 0.72)
+        const focalLength = w * 0.72;
 
         if (cameraMatrix) cameraMatrix.delete();
         cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
@@ -532,6 +536,17 @@
       tareOffsets = { camber: 0.0, toe: 0.0 };
       tagHistoryMap.clear();
       tareBtn.innerText = "Tare";
+    }
+  };
+
+  // 1-Click Calibration at 1.00m
+  calibBtn.onclick = () => {
+    if (latestRawDistance && latestRawDistance > 0.2) {
+      distScaleMultiplier = 1.0 / latestRawDistance;
+      calibBtn.innerText = "Calibrated ✅";
+      setTimeout(() => calibBtn.innerText = "Calib 1m", 2000);
+    } else {
+      alert("Place tag in camera view before calibrating.");
     }
   };
 
@@ -774,11 +789,9 @@
   function computeGravityLockedAngles(R) {
     const rad2deg = 180.0 / Math.PI;
 
-    // Direct Normalized Gravity Vector from Phone's MEMS Accelerometer
     const gLen = Math.hypot(gCam[0], gCam[1], gCam[2]) || 1.0;
     const gNorm = [gCam[0] / gLen, gCam[1] / gLen, gCam[2] / gLen];
 
-    // Tag Normal in Camera Frame
     const nx = R[2], ny = R[5], nz = R[8];
 
     // True Camber = Angle between Tag Normal and True Earth Gravity Plane
@@ -836,7 +849,7 @@
     if (Math.abs(medT - state.lockedToe) > DEADBAND) {
       state.lockedToe = state.lockedToe * 0.60 + medT * 0.40;
     }
-    if (Math.abs(medD - state.lockedDist) > 0.03) {
+    if (Math.abs(medD - state.lockedDist) > 0.02) {
       state.lockedDist = state.lockedDist * 0.80 + medD * 0.20;
     }
 
@@ -883,8 +896,11 @@
       cv.Rodrigues(rvec, R);
 
       const rawDist = Math.hypot(tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]);
+      latestRawDistance = rawDist;
+      const calibratedDist = rawDist * distScaleMultiplier;
+
       const rawAngles = computeGravityLockedAngles(R.data64F);
-      const filtered = filterAngles(tag.id, rawAngles.rawCamber, rawAngles.rawToe, rawDist);
+      const filtered = filterAngles(tag.id, rawAngles.rawCamber, rawAngles.rawToe, calibratedDist);
 
       const centerX = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
       const centerY = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
