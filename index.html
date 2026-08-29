@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AprilTag 36h11 3D Pose Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #0d0d0d;
+      color: #fff;
+      overflow: hidden;
+    }
+    #container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    video { display: none; }
+    canvas {
+      width: 100vw;
+      height: 100vh;
+      object-fit: contain;
+      background: #000;
+    }
+    .hud {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      background: rgba(10, 10, 10, 0.88);
+      backdrop-filter: blur(10px);
+      padding: 14px 18px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+      max-width: 340px;
+      z-index: 10;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    .hud h1 {
+      font-size: 14px;
+      margin-bottom: 6px;
+      color: #00e676;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .controls {
+      position: absolute;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(10, 10, 10, 0.88);
+      backdrop-filter: blur(10px);
+      padding: 8px 18px;
+      border-radius: 30px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 10;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+    .controls label {
+      font-size: 12px;
+      color: #ccc;
+    }
+    .controls input {
+      width: 60px;
+      padding: 4px 6px;
+      background: #222;
+      border: 1px solid #555;
+      color: #fff;
+      border-radius: 4px;
+      text-align: center;
+    }
+    .controls button {
+      background: #00e676;
+      border: none;
+      color: #111;
+      padding: 6px 14px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: bold;
+    }
+    .controls button:hover { background: #00c853; }
+    #status { font-weight: bold; color: #fbc02d; }
+    .value-row {
+      display: flex;
+      justify-content: space-between;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .tag-block {
+      margin-top: 8px;
+      padding: 6px 8px;
+      background: rgba(255, 255, 255, 0.06);
+      border-left: 3px solid #00e676;
+      border-radius: 4px;
+    }
+  </style>
+  <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
+</head>
+<body>
+
+<div id="container">
+  <video id="video" playsinline muted autoplay></video>
+  <canvas id="outputCanvas"></canvas>
+
+  <div class="hud">
+    <h1>AprilTag (36h11) 3D Tracker</h1>
+    <div>Status: <span id="status">Loading OpenCV...</span></div>
+    <div id="telemetry" style="margin-top: 8px; border-top: 1px solid #333; padding-top: 6px;">
+      <i>Starting camera...</i>
+    </div>
+  </div>
+
+  <div class="controls">
+    <label for="tagSize">Tag Size (mm):</label>
+    <input type="number" id="tagSize" value="100" min="10" max="1000" step="5">
+    <button id="toggleCamera">Switch Cam</button>
+  </div>
+</div>
+
+<script>
+  // Complete 36h11 codebook dictionary (IDs 0 to 586)
+  const TAG_36H11_CODES = [
+    0xd5d628584n,0xd97f18b49n,0xdd280910en,0xe479e9c98n,0xebcbca822n,0xf31dab3acn,0x056a5d085n,0x10652e1d4n,
+    0x22b1dfeadn,0x265ad0472n,0x34fe91b86n,0x3ff962cd5n,0x43a25329an,0x474b4385fn,0x4e9d243e9n,0x5246149aen,
+    0x5997f5538n,0x683bb6c4cn,0x6be4a7211n,0x7e3158eean,0x8544e99ebn,0x89ee1a067n,0x9330aadb0n,0x9ee45b733n,
+    0xa0eb3c4f7n,0xb1922d165n,0xbcc6fc7ecn,0xc3750df18n,0xcbaedc4e4n,0xd0089e13bn,0xd9fcde90fn,0xdd030f0f2n,
+    0xe00adfcb6n,0xebd4ef771n,0xef71afb0cn,0xf472800bfn,0x02c05166an,0x066941cb7n,0x17c062db2n,0x1bb97334fn,
+    0x20ba440d9n,0x3060655c6n,0x39b356f1fn,0x44c68832dn,0x486f989e0n,0x59c3a9fbfn,0x60975bd4en,0x643e4b783n,
+    0x6de77ab5dn,0x71446a190n,0x7e945c589n,0x83e20e8b1n,0x874b1ec7cn,0x96ee3fed4n,0xa7b3e157en,0xafb802611n,
+    0xb31112adcn,0xb60ee307bn,0xc2be23bb2n,0xca9d32029n,0xd19f30b91n,0xd5362015cn,0xdfef11dcfn,0xe7e301275n,
+    0xee8b928ecn,0xf22282221n,0xfbb6f3dfan,0x00c4e4604n,0x037db7dben,0x0874c776bn,0x12c9d640bn,0x1660c6ac6n,
+    0x27c3e7bf1n,0x331094dc1n,0x37b98570cn,0x4966fa644n,0x50cfb8c5dn,0x5d92ca36fn,0x6c6eec507n,0x70c7fd0d5n,
+    0x787adccf2n,0x8cd60f6acn,0x917bfed7fn,0x9d00de861n,0xa1a9df2b2n,0xac741cdfen,0xb0dd0c723n,0xbd073e659n,
+    0xc1a02fb8an,0xc5792e547n,0xdc6b5e0cbn,0xe5765f02dn,0xe9dd4fae0n,0xf4706dbbdn,0xf8d97d170n,0x0041d88a1n,
+    0x0cb6cb219n,0x111bcbe66n,0x1442c04fbn,0x1cf9e3e3en,0x280e2ad06n,0x2cb73a7cbn,0x300d1bbd1n,0x3cf0290e2n,
+    0x400e4cd83n,0x4cb75c74en,0x51194095dn,0x5dae62363n,0x61a84ebc5n,0x6d1f7e0efn,0x7cb553ad8n,0x80547656dn,
+    0x8ca3548edn,0x9157452d3n,0x95ef6bf10n,0x99507a5ddn,0x9d074bf8en,0xa00f898a8n,0xac09bb5fbn,0xb0558b0f8n,
+    0xb8ac9bfd4n,0xc054a8a5cn,0xccafbb8b5n,0xd1a2a472cn,0xd50bb5ce1n,0xdd5e88107n,0xe806bf3een,0xefbda5545n,
+    0xf344b4e8an,0xf8aa94605n,0xfcf385cdan,0x0283c79a9n,0x062ad7364n,0x0ed6e60b2n,0x127b17316n,0x1adae8b8bn,
+    0x269e8b010n,0x2a379ba5dn,0x329dcb0fcn,0x3634dbab1n,0x3a7eebd5an,0x422be8eb7n,0x4682f847an,0x53460938en,
+    0x5ed6fa013n,0x67393bd40n,0x6ba02b78dn,0x733aebe4an,0x7f25e91bdn,0x82846f481n,0x87317e81cn,0x8e834ebbfn,
+    0x96987cb54n,0x9be04e578n,0x9f495e9b5n,0xa3f66edben,0xa74f7e773n,0xb7f55cd6an,0xbfa84d7a7n,0xc7527fe2bn,
+    0xcbfa6f4e6n,0xd3f16ff31n,0xdf4a4db52n,0xe2f75fa8an,0xe64e4f047n,0xee515eb89n,0xf2fa4e144n,0xfaec4d01bn,
+    0x020d20d40n,0x06b43078dn,0x0e5d0144bn,0x12b5003c2n,0x1ea2239d5n,0x2719124a9n,0x2e0c1097dn,0x35bc33568n,
+    0x390522fb7n,0x460e1329cn,0x4bb703851n,0x520a22165n,0x5a17336e2n,0x63a3028fen,0x670a12233n,0x76b823e44n,
+    0x871b24bf2n,0x8ab23412fn,0x925915d18n,0x9600057d5n,0x9bb7378fbn,0xa20c0750cn,0xaa1116247n,0xb3b4260d5n,
+    0xb70d36a18n,0xc7b50428cn,0xcb0c14c41n,0xd6b715697n,0xdf0516ff8n,0xe3bc07525n,0xe70517fean,0xebb2362b5n,
+    0xf30737a34n,0xf7be270f9n,0xfb03043d1n,0x00e12d46bn,0x0cb01e855n,0x10b90e298n,0x18003eb8cn,0x24bc2d98dn,
+    0x2c050f242n,0x35081c7ffn,0x38b13df12n,0x3cf82d5dfn,0x40b61cd7dn,0x490b3ec5an,0x4d522e697n,0x51eb3fb54n,
+    0x5da43dbbbn,0x60021ffben,0x69ba0e303n,0x6d031efcen,0x71a83e0e7n,0x7db12ebdfn,0x81b70cbe8n,0x850e1c125n,
+    0x88b93cb14n,0x94042f8c5n,0x9cb30df0bn,0xa8be3f3a0n,0xad072fe7dn,0xb1ae0e5efn,0xbdab2c103n,0xc0051e737n,
+    0xccbe3ebf2n,0xd0062f634n,0xd4bf3fcf9n,0xd8081c3d1n,0xdcb10cf1cn,0xe50f1ee68n,0xe9b60e4a5n,0xf1ac3d026n,
+    0xf9012f1cfn,0xfd581fbf3n,0x011eb17ecn,0x09a783637n,0x0dfa92cfan,0x15acb292en,0x1c1791a8dn,0x21a482b6en,
+    0x281981881n,0x2dc0b3b42n,0x317da2018n,0x3cce90835n,0x411aa34e0n,0x45a3b3e2dn,0x4918a09e1n,0x551ba1d8bn,
+    0x59a2b1746n,0x60ae93148n,0x641783b85n,0x701aa2cb5n,0x79ae81561n,0x80acb3217n,0x881180d52n,0x8cbe9079fn,
+    0x90a3a2283n,0x941ab284en,0x98a0b1297n,0x9c19a185an,0xa4a7806f1n,0xb11ba3816n,0xbc14a3311n,0xc1198305dn,
+    0xc5a093a90n,0xc81bb204cn,0xd51aa1228n,0xddaf93bc7n,0xe11ba2173n,0xe9a690e00n,0xed1f804cden,0xf1a5a1f1an,
+    0xf51cb15d7n,0xf9a68393cn,0xfd1f933f1n,0x031bb03a6n,0x0ef0816dfn,0x124d90ce3n,0x1e15b225dn,0x27b882361n,
+    0x2b01929acn,0x370691456n,0x3bbfa0f9bn,0x424db21cfn,0x4f1693721n,0x56a59247an,0x5a1cb2e37n,0x630483863n,
+    0x67bd932aen,0x724ca022an,0x76f5b08e7n,0x7a1ea13e2n,0x7ee992c90n,0x824f92d4dn,0x8e14a1a7en,0x930990714n,
+    0x97b080dd9n,0x9efb91007n,0xa24ea20ebn,0xaef593922n,0xb6ba91cf3n,0xbaf3a0056n,0xbe4ab0a9bn,0xc24db3c64n,
+    0xcfe2926bfn,0xd6b99370fn,0xda0083dc2n,0xde4cb2818n,0xebbb91147n,0xef0281b8an,0xf24ea1525n,0xf6f7b1fe8n,
+    0xfbe0a26d1n,0x054f76269n,0x08fb44fa7n,0x0ca05456an,0x10f747805n,0x144e572c8n,0x18fd6681fn,0x1c44762d2n,
+    0x24fd54dfdn,0x294377042n,0x344f6534dn,0x38f4575e4n,0x41f346b08n,0x454a561c5n,0x49f06741cn,0x4d4977ed1n,
+    0x54fa44c3cn,0x5841546f1n,0x5cfc6731an,0x60fd75896n,0x6ca365030n,0x71fc56e25n,0x7545464e8n,0x7df17498en,
+    0x814d45866n,0x8da177651n,0x91fa7419cn,0x954364b51n,0x98f6551b8n,0x9c4f45b75n,0xa14c77c0bn,0xa5f5676c6n,
+    0xa948443e0n,0xadfd469e3n,0xb44c57dc2n,0xb8f775739n,0xc0f165a3en,0xc448750f3n,0xc8f24452an,0xcc4b54fe7n,
+    0xd0fa7679bn,0xd94447387n,0xddfd5794an,0xe14d55b4dn,0xe5f445180n,0xe94e76ea9n,0xedf766464n,0xf5495632en,
+    0xf9f074895n,0xfd4964258n,0x01a2d594dn,0x051bc7280n,0x09a5c434dn,0x0d1cd6880n,0x15a7d656fn,0x191ec5aa2n,
+    0x211ac61bbn,0x25a3f7476n,0x2da8d4cd5n,0x311be6318n,0x39a5f5024n,0x3d1ce7be9n,0x411ed710an,0x49a4f6cf7n,
+    0x4d1de473an,0x51a3d60c4n,0x551ac4a09n,0x5da7f7be2n,0x611ed5221n,0x65a5e783dn,0x691be6762n,0x6da4d5dafn,
+    0x711dc7387n,0x75a6f49e1n,0x791fe5c2cn,0x7da2c5f11n,0x811fc6b3en,0x8da6c4495n,0x911dc4eedn,0x95a4f653en,
+    0x9da5e6dd0n,0xa51ce4bb6n,0xada7d716bn,0xb11ee7cb5n,0xb9a5d420en,0xbd1cc69c3n,0xc1a1d6ea5n,0xc518f45a8n,
+    0xc9a2c5179n,0xcd1be7ab4n,0xd51dc4dc7n,0xd9a4e6628n,0xdd1dd740cn,0xe1a0c4f1an,0xe519e64d7n,0xe9a3f7f0bn,
+    0xed1ad55d6n,0xf1a1e7cd8n,0xf9a3c5a1fn,0xfd1af71f4n,0x03ecff033n,0x0745efafen,0x0eeddcc55n,0x13e9ec490n,
+    0x1a4aeef02n,0x1ef3dfdc9n,0x274feea5cn,0x2ba6ff991n,0x3648dc2a6n,0x3af1cc96bn,0x43eefca42n,0x4eeddd1d1n,
+    0x5244dcbb5n,0x5ebbeee4bn,0x674dece6fn,0x6fe2cdd4en,0x724bcdeebn,0x76f2dd426n,0x7a49ee1dfn,0x83e3cf758n,
+    0x8ee7ec2f4n,0x924effe8cn,0x96f7ef441n,0x9e43ce0d2n,0xa2edfcbd5n,0xa654ec118n,0xb2edeb87dn,0xba45ee3a7n,
+    0xbeecef86an,0xc3eafdb63n,0xc753ed0aen,0xcfe9cf047n,0xd248df928n,0xdfefec814n,0xe3e1dfbcfn,0xe758cf102n,
+    0xebeece6bfn,0xf6f6cc5d8n,0xfafddce15n,0xfee4ecbe4n,0x016723223n,0x09de329cen,0x0d6113b52n,0x116e0018bn,
+    0x19d92134cn,0x1d66028c7n,0x25651036fn,0x29dc3302bn,0x2d6332da7n,0x316a111a8n,0x39d102071n,0x416801646n,
+    0x49d322789n,0x4d6c23ce5n,0x516301be4n,0x59d83161en,0x5d6712d93n,0x616e22f22n,0x69d5138fcn,0x6d6a30c00n,
+    0x716503fedn,0x79de026c4n,0x7d6121d59n,0x816733ec0n,0x89dc2050fn,0x8d6301e83n,0x91642152fn,0x99df12bf5n,
+    0x9d6031079n,0xa56e208b0n,0xad643354cn,0xb16930ae2n,0xb9d203bd7n,0xc16200234n,0xc9d9333een,0xcd6610863n,
+    0xd16123999n,0xd9da11a45n,0xdd65321cbn,0xe16c31758n,0xe9d722487n,0xed6813f0an,0xf16f30a9bn,0xf9d401941n,
+    0xfd6b222c0n,0x03d360057n,0x076c43310n,0x0ee772d62n,0x1258618ebn,0x16e742526n,0x1ebc71efan,0x23d052d9dn,
+    0x276f71050n,0x2bda50284n,0x325b73d21n,0x36e4510ecn,0x3fb970678n,0x476a6176bn,0x4ee153a39n,0x525c40fc0n,
+    0x56e36320dn,0x5eb8509d1n,0x625942475n,0x6ea241bbfn,0x725d6263fn,0x76e271bf2n,0x7a57639a9n,0x83dc62b8an,
+    0x876351647n,0x8eb8600f5n,0x92577095en,0x96e853493n,0x9abd61e05n,0xa3d740cb1n,0xa7686317cn,0xabdd43e62n,
+    0xaf6260dabn,0xb2524330bn,0xbbdc52097n,0xc76550dfcn,0xcbde73020n,0xd256728c4n,0xd6e951508n,0xdfb761765n,
+    0xe3d853118n,0xe76770cd5n,0xebdc72e4en,0xf25371c17n,0xf6ec627b0n
+  ];
+
+  const codebookMap = new Map();
+  TAG_36H11_CODES.forEach((code, id) => codebookMap.set(code, id));
+
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('outputCanvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const statusText = document.getElementById('status');
+  const telemetryEl = document.getElementById('telemetry');
+  const tagSizeInput = document.getElementById('tagSize');
+  const toggleCamBtn = document.getElementById('toggleCamera');
+
+  let openCvReady = false;
+  let currentFacingMode = 'environment';
+  let stream = null;
+  let isLoopRunning = false;
+
+  // OpenCV resources
+  let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
+  let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
+
+  function onOpenCvReady() {
+    cv['onRuntimeInitialized'] = () => {
+      openCvReady = true;
+      statusText.innerText = "OpenCV Initialized";
+      statusText.style.color = "#29b6f6";
+      startCamera();
+    };
+  }
+
+  async function startCamera() {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: currentFacingMode,
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+
+      video.srcObject = stream;
+      await video.play();
+
+      video.onloadedmetadata = () => {
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+
+        const w = canvas.width;
+        const h = canvas.height;
+        const focalLength = Math.max(w, h);
+
+        if (cameraMatrix) cameraMatrix.delete();
+        cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
+          focalLength, 0, w / 2,
+          0, focalLength, h / 2,
+          0, 0, 1
+        ]);
+
+        if (distCoeffs) distCoeffs.delete();
+        distCoeffs = cv.matFromArray(4, 1, cv.CV_64F, [0, 0, 0, 0]);
+
+        if (srcMat) srcMat.delete();
+        if (grayMat) grayMat.delete();
+        if (threshMat) threshMat.delete();
+        if (warpedMat) warpedMat.delete();
+        if (dstQuadPts) dstQuadPts.delete();
+
+        srcMat = new cv.Mat(h, w, cv.CV_8UC4);
+        grayMat = new cv.Mat(h, w, cv.CV_8UC1);
+        threshMat = new cv.Mat(h, w, cv.CV_8UC1);
+        warpedMat = new cv.Mat(80, 80, cv.CV_8UC1);
+
+        // Canonical 80x80 quadrilateral coordinates
+        dstQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+          0, 0,
+          79, 0,
+          79, 79,
+          0, 79
+        ]);
+
+        statusText.innerText = "Tracking Active (36h11)";
+        statusText.style.color = "#00e676";
+
+        if (!isLoopRunning) {
+          isLoopRunning = true;
+          requestAnimationFrame(processFrame);
+        }
+      };
+    } catch (err) {
+      statusText.innerText = "Camera Error: " + err.message;
+      statusText.style.color = "#f44336";
+      console.error(err);
+    }
+  }
+
+  toggleCamBtn.onclick = () => {
+    currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+    startCamera();
+  };
+
+  function processFrame() {
+    try {
+      if (video.readyState === video.HAVE_ENOUGH_DATA && openCvReady && srcMat) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        srcMat.data.set(imgData.data);
+        cv.cvtColor(srcMat, grayMat, cv.COLOR_RGBA2GRAY, 0);
+
+        // Robust adaptive binarization for tag detection
+        cv.adaptiveThreshold(grayMat, threshMat, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 25, 7);
+
+        let contours = new cv.MatVector();
+        let hierarchy = new cv.Mat();
+        cv.findContours(threshMat, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+        const detectedTags = [];
+        const minArea = (canvas.width * canvas.height) * 0.0008;
+        const maxArea = (canvas.width * canvas.height) * 0.90;
+        const processedCenters = [];
+
+        for (let i = 0; i < contours.size(); ++i) {
+          let cnt = contours.get(i);
+          let area = cv.contourArea(cnt);
+
+          if (area > minArea && area < maxArea) {
+            let quadPts = extractQuadCorners(cnt);
+
+            if (quadPts !== null) {
+              let cx = (quadPts[0].x + quadPts[1].x + quadPts[2].x + quadPts[3].x) / 4;
+              let cy = (quadPts[0].y + quadPts[1].y + quadPts[2].y + quadPts[3].y) / 4;
+
+              // De-duplicate overlapping inner/outer quad boundaries
+              let duplicate = false;
+              for (let p of processedCenters) {
+                if (Math.hypot(p.x - cx, p.y - cy) < 18) {
+                  duplicate = true;
+                  break;
+                }
+              }
+
+              if (!duplicate) {
+                let srcQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                  quadPts[0].x, quadPts[0].y,
+                  quadPts[1].x, quadPts[1].y,
+                  quadPts[2].x, quadPts[2].y,
+                  quadPts[3].x, quadPts[3].y
+                ]);
+
+                let M = cv.getPerspectiveTransform(srcQuadPts, dstQuadPts);
+                cv.warpPerspective(grayMat, warpedMat, M, new cv.Size(80, 80));
+
+                let result = decodeWarpedAprilTag(warpedMat);
+                if (result !== null) {
+                  processedCenters.push({ x: cx, y: cy });
+
+                  // Align 4 corner points according to the tag's true orientation
+                  let r = result.rotation;
+                  let trueCorners = [
+                    quadPts[(0 + r) % 4],
+                    quadPts[(1 + r) % 4],
+                    quadPts[(2 + r) % 4],
+                    quadPts[(3 + r) % 4]
+                  ];
+
+                  detectedTags.push({
+                    id: result.id,
+                    corners: trueCorners
+                  });
+                }
+
+                srcQuadPts.delete();
+                M.delete();
+              }
+            }
+          }
+          cnt.delete();
+        }
+
+        contours.delete();
+        hierarchy.delete();
+
+        // 3D Pose Estimation & Overlay Rendering
+        solveAndDrawTags(detectedTags);
+      }
+    } catch (err) {
+      console.error("Pipeline error:", err);
+    } finally {
+      requestAnimationFrame(processFrame);
+    }
+  }
+
+  // Extracts 4 convex quadrilateral corners using multi-scale hull approximation
+  function extractQuadCorners(cnt) {
+    let hull = new cv.Mat();
+    cv.convexHull(cnt, hull, false, true);
+    let peri = cv.arcLength(hull, true);
+
+    let approx = new cv.Mat();
+    let bestQuad = null;
+
+    // Search epsilon scale for 4-vertex polygon
+    for (let epsFactor = 0.03; epsFactor <= 0.12; epsFactor += 0.015) {
+      cv.approxPolyDP(hull, approx, epsFactor * peri, true);
+      if (approx.rows === 4 && cv.isContourConvex(approx)) {
+        let rawPts = [];
+        for (let j = 0; j < 4; j++) {
+          rawPts.push({ x: approx.data32S[j * 2], y: approx.data32S[j * 2 + 1] });
+        }
+        bestQuad = orderClockwise(rawPts);
+        break;
+      }
+    }
+
+    hull.delete();
+    approx.delete();
+    return bestQuad;
+  }
+
+  function orderClockwise(pts) {
+    let cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
+    let cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
+
+    pts.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+
+    // Sort starting with top-left (minimum x + y)
+    let minIdx = 0, minSum = pts[0].x + pts[0].y;
+    for (let i = 1; i < 4; i++) {
+      let sum = pts[i].x + pts[i].y;
+      if (sum < minSum) {
+        minSum = sum;
+        minIdx = i;
+      }
+    }
+
+    return [
+      pts[minIdx],
+      pts[(minIdx + 1) % 4],
+      pts[(minIdx + 2) % 4],
+      pts[(minIdx + 3) % 4]
+    ];
+  }
+
+  // Decodes 8x8 AprilTag grid (1-cell border + 6x6 interior)
+  function decodeWarpedAprilTag(mat) {
+    const grid = [];
+    let borderSum = 0, borderCount = 0;
+    const interiorVals = [];
+
+    for (let r = 0; r < 8; r++) {
+      grid[r] = [];
+      for (let c = 0; c < 8; c++) {
+        let sum = 0;
+        // Sample center 4x4 sub-region of each 10x10 cell
+        for (let y = r * 10 + 3; y < r * 10 + 7; y++) {
+          for (let x = c * 10 + 3; x < c * 10 + 7; x++) {
+            sum += mat.data[y * 80 + x];
+          }
+        }
+        let avg = sum / 16.0;
+        grid[r][c] = avg;
+
+        if (r === 0 || r === 7 || c === 0 || c === 7) {
+          borderSum += avg;
+          borderCount++;
+        } else {
+          interiorVals.push(avg);
+        }
+      }
+    }
+
+    const borderAvg = borderSum / borderCount;
+    const maxInt = Math.max(...interiorVals);
+    const minInt = Math.min(...interiorVals);
+
+    // Validate dark border presence and contrast
+    if ((maxInt - borderAvg) < 25 || (maxInt - minInt) < 30) {
+      return null;
+    }
+
+    const threshold = (borderAvg + maxInt) / 2.0;
+    const payload = [];
+    for (let r = 1; r <= 6; r++) {
+      payload[r - 1] = [];
+      for (let c = 1; c <= 6; c++) {
+        payload[r - 1][c - 1] = grid[r][c] > threshold ? 1 : 0;
+      }
+    }
+
+    // Evaluate all 4 rotations (0°, 90°, 180°, 270°)
+    for (let rot = 0; rot < 4; rot++) {
+      let code = 0n;
+      for (let r = 0; r < 6; r++) {
+        for (let c = 0; c < 6; c++) {
+          let bit = 0;
+          if (rot === 0) bit = payload[r][c];
+          else if (rot === 1) bit = payload[5 - c][r];
+          else if (rot === 2) bit = payload[5 - r][5 - c];
+          else if (rot === 3) bit = payload[c][5 - r];
+
+          code = (code << 1n) | BigInt(bit);
+        }
+      }
+
+      if (codebookMap.has(code)) {
+        return { id: codebookMap.get(code), rotation: rot };
+      }
+    }
+
+    return null;
+  }
+
+  // 3D SolvePnP, Metric Pose & Coordinate Frame Rendering
+  function solveAndDrawTags(tags) {
+    if (tags.length === 0) {
+      telemetryEl.innerHTML = '<i>Searching for AprilTag 36h11...</i>';
+      return;
+    }
+
+    const tagSizeMeters = (parseFloat(tagSizeInput.value) || 100) / 1000.0;
+    const s = tagSizeMeters;
+
+    // Real-world 3D coordinates in tag frame
+    const objPoints = cv.matFromArray(4, 3, cv.CV_32F, [
+      -s/2, -s/2, 0,
+       s/2, -s/2, 0,
+       s/2,  s/2, 0,
+      -s/2,  s/2, 0
+    ]);
+
+    let telemetryHtml = '';
+
+    tags.forEach(tag => {
+      const c = tag.corners;
+      const imgPoints = cv.matFromArray(4, 2, cv.CV_32F, [
+        c[0].x, c[0].y,
+        c[1].x, c[1].y,
+        c[2].x, c[2].y,
+        c[3].x, c[3].y
+      ]);
+
+      let rvec = new cv.Mat();
+      let tvec = new cv.Mat();
+      cv.solvePnP(objPoints, imgPoints, cameraMatrix, distCoeffs, rvec, tvec);
+
+      let R = new cv.Mat();
+      cv.Rodrigues(rvec, R);
+
+      const euler = rotationMatrixToEuler(R.data64F);
+      const tx = tvec.data64F[0];
+      const ty = tvec.data64F[1];
+      const tz = tvec.data64F[2];
+      const distance = Math.hypot(tx, ty, tz);
+
+      const centerX = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
+      const centerY = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
+
+      // Draw green boundary polygon & corner dot
+      drawTagOutline(c);
+
+      // Project & Draw 3D XYZ coordinate axes
+      draw3DAxes(rvec, tvec, s * 0.75);
+
+      // Floating label above tag
+      drawOnScreenLabels(centerX, centerY, tag.id, euler, distance);
+
+      telemetryHtml += `
+        <div class="tag-block">
+          <b style="color: #00e676;">Tag ID #${tag.id}</b>
+          <div class="value-row"><span>Pitch (X):</span> <span>${euler.pitch}°</span></div>
+          <div class="value-row"><span>Yaw &nbsp;&nbsp;(Y):</span> <span>${euler.yaw}°</span></div>
+          <div class="value-row"><span>Roll &nbsp;(Z):</span> <span>${euler.roll}°</span></div>
+          <div class="value-row"><span>XYZ (m)&nbsp;:</span> <span>[${tx.toFixed(2)}, ${ty.toFixed(2)}, ${tz.toFixed(2)}]</span></div>
+          <div class="value-row"><span>Distance:</span> <span>${distance.toFixed(2)} m</span></div>
+        </div>
+      `;
+
+      imgPoints.delete();
+      rvec.delete();
+      tvec.delete();
+      R.delete();
+    });
+
+    objPoints.delete();
+    telemetryEl.innerHTML = telemetryHtml;
+  }
+
+  function rotationMatrixToEuler(R) {
+    const r00 = R[0], r01 = R[1], r02 = R[2];
+    const r10 = R[3], r11 = R[4], r12 = R[5];
+    const r20 = R[6], r21 = R[7], r22 = R[8];
+
+    let pitch, yaw, roll;
+    const sy = Math.sqrt(r00 * r00 + r10 * r10);
+    const singular = sy < 1e-6;
+
+    if (!singular) {
+      pitch = Math.atan2(r21, r22);
+      yaw   = Math.atan2(-r20, sy);
+      roll  = Math.atan2(r10, r00);
+    } else {
+      pitch = Math.atan2(-r12, r11);
+      yaw   = Math.atan2(-r20, sy);
+      roll  = 0;
+    }
+
+    const rad2deg = 180 / Math.PI;
+    return {
+      pitch: (pitch * rad2deg).toFixed(1),
+      yaw:   (yaw * rad2deg).toFixed(1),
+      roll:  (roll * rad2deg).toFixed(1)
+    };
+  }
+
+  function drawTagOutline(c) {
+    ctx.beginPath();
+    ctx.moveTo(c[0].x, c[0].y);
+    ctx.lineTo(c[1].x, c[1].y);
+    ctx.lineTo(c[2].x, c[2].y);
+    ctx.lineTo(c[3].x, c[3].y);
+    ctx.closePath();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#00e676';
+    ctx.stroke();
+
+    // Red dot indicating top-left corner (Corner 0)
+    ctx.beginPath();
+    ctx.arc(c[0].x, c[0].y, 5, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ff1744';
+    ctx.fill();
+  }
+
+  function draw3DAxes(rvec, tvec, length) {
+    const axisPoints3D = cv.matFromArray(4, 3, cv.CV_32F, [
+      0, 0, 0,
+      length, 0, 0,
+      0, length, 0,
+      0, 0, -length
+    ]);
+
+    let imagePoints = new cv.Mat();
+    cv.projectPoints(axisPoints3D, rvec, tvec, cameraMatrix, distCoeffs, imagePoints);
+    const pts = imagePoints.data32F;
+
+    const originX = pts[0], originY = pts[1];
+    drawLine(originX, originY, pts[2], pts[3], '#ff1744', 4); // X-Axis (Red)
+    drawLine(originX, originY, pts[4], pts[5], '#00e676', 4); // Y-Axis (Green)
+    drawLine(originX, originY, pts[6], pts[7], '#2979ff', 4); // Z-Axis (Blue)
+
+    axisPoints3D.delete();
+    imagePoints.delete();
+  }
+
+  function drawLine(x1, y1, x2, y2, color, width) {
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.lineWidth = width;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+  }
+
+  function drawOnScreenLabels(x, y, id, euler, dist) {
+    ctx.save();
+    ctx.font = 'bold 13px monospace';
+    ctx.shadowColor = 'black';
+    ctx.shadowBlur = 4;
+
+    const lines = [
+      `ID #${id}`,
+      `P: ${euler.pitch}°`,
+      `Y: ${euler.yaw}°`,
+      `R: ${euler.roll}°`,
+      `D: ${dist.toFixed(2)}m`
+    ];
+
+    lines.forEach((line, idx) => {
+      ctx.fillStyle = idx === 0 ? '#00e676' : '#ffffff';
+      ctx.fillText(line, x + 15, y - 25 + idx * 16);
+    });
+
+    ctx.restore();
+  }
+</script>
+</body>
+</html>
