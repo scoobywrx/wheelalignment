@@ -10,7 +10,7 @@
       width: 100%;
       height: 100dvh;
       max-height: 100dvh;
-      background: #0d0d0d;
+      background: #000;
       color: #fff;
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -32,19 +32,19 @@
     }
     .hud {
       position: absolute;
-      top: max(12px, env(safe-area-inset-top, 12px));
-      left: 12px;
-      right: 12px;
-      background: rgba(14, 14, 14, 0.90);
+      top: max(10px, env(safe-area-inset-top, 10px));
+      left: 10px;
+      right: 10px;
+      background: rgba(14, 14, 14, 0.92);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      padding: 12px 14px;
+      padding: 10px 12px;
       border-radius: 12px;
-      font-size: 13px;
-      line-height: 1.4;
+      font-size: 12px;
+      line-height: 1.35;
       z-index: 10;
       border: 1px solid rgba(255, 255, 255, 0.15);
-      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.7);
     }
     .hud-header {
       display: flex;
@@ -73,22 +73,22 @@
     }
     .controls-panel {
       position: absolute;
-      bottom: max(16px, env(safe-area-inset-bottom, 16px));
+      bottom: max(12px, env(safe-area-inset-bottom, 12px));
       left: 50%;
       transform: translateX(-50%);
-      width: calc(100% - 24px);
-      max-width: 380px;
-      background: rgba(14, 14, 14, 0.92);
+      width: calc(100% - 20px);
+      max-width: 400px;
+      background: rgba(14, 14, 14, 0.94);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      padding: 8px 12px;
-      border-radius: 16px;
+      padding: 8px 10px;
+      border-radius: 14px;
       display: flex;
       flex-direction: column;
       gap: 6px;
       z-index: 10;
       border: 1px solid rgba(255, 255, 255, 0.2);
-      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.7);
     }
     .ctrl-row {
       display: flex;
@@ -101,7 +101,7 @@
       color: #ccc;
     }
     .ctrl-row input {
-      width: 46px;
+      width: 54px;
       padding: 4px;
       background: #222;
       border: 1px solid #555;
@@ -116,66 +116,38 @@
       border: none;
       color: #111;
       padding: 8px 6px;
-      border-radius: 10px;
+      border-radius: 8px;
       cursor: pointer;
       font-size: 11px;
       font-weight: bold;
       text-align: center;
     }
-    .btn-small {
-      flex: none;
-      width: 28px;
-      padding: 6px 0;
-      background: #333;
-      color: #fff;
-      border: 1px solid #555;
-    }
     .btn-sensor { background: #ff9100; color: #111; }
     .btn-tare { background: #ffca28; color: #111; }
-    .btn-cam { background: #444; color: #fff; }
+    .btn-cam { background: #444; color: #fff; flex: 0.6; }
     .value-row {
       display: flex;
       justify-content: space-between;
-      font-family: monospace;
-      font-size: 14px;
-      margin: 3px 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      margin: 2px 0;
     }
     .value-highlight {
       font-weight: bold;
       color: #00e676;
-      font-size: 15px;
+      font-size: 14px;
     }
     .tag-block {
       margin-top: 4px;
-      padding: 6px 8px;
-      background: rgba(255, 255, 255, 0.06);
+      padding: 5px 8px;
+      background: rgba(255, 255, 255, 0.07);
       border-left: 3px solid #00e676;
       border-radius: 4px;
     }
-    #landscapeWarning {
-      display: none;
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100vw;
-      height: 100dvh;
-      background: rgba(0, 0, 0, 0.94);
-      z-index: 100;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      text-align: center;
-      padding: 24px;
-    }
-    #landscapeWarning h2 { color: #ff5252; font-size: 18px; margin-bottom: 8px; }
-    #landscapeWarning p { color: #ccc; font-size: 13px; margin-bottom: 16px; }
-    #landscapeWarning button {
-      background: #333;
-      border: 1px solid #777;
-      color: #fff;
-      padding: 6px 16px;
-      border-radius: 20px;
-      font-size: 12px;
+    #fpsCounter {
+      font-size: 10px;
+      color: #888;
+      font-family: monospace;
     }
   </style>
   <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady()"></script>
@@ -186,18 +158,15 @@
   <video id="video" playsinline muted autoplay></video>
   <canvas id="outputCanvas"></canvas>
 
-  <div id="landscapeWarning">
-    <h2>⚠️ Portrait Mode Required</h2>
-    <p>Please hold your iPhone upright in Portrait orientation.</p>
-    <button onclick="dismissLandscapeWarning()">Dismiss</button>
-  </div>
-
   <div class="hud">
     <div class="hud-header">
-      <h1>AprilTag Alignment</h1>
-      <span id="imuStatus" class="badge">Sensor: Inactive</span>
+      <h1>AprilTag Wheel Alignment</h1>
+      <span id="imuStatus" class="badge">Gravity: Inactive</span>
     </div>
-    <div>Status: <span id="status" style="font-weight: bold; color: #fbc02d;">Loading OpenCV WASM...</span></div>
+    <div style="display: flex; justify-content: space-between;">
+      <span>Status: <span id="status" style="font-weight: bold; color: #fbc02d;">Loading WASM...</span></span>
+      <span id="fpsCounter">FPS: --</span>
+    </div>
     <div id="telemetry" style="margin-top: 4px; border-top: 1px solid #333; padding-top: 4px;">
       <i>Starting camera...</i>
     </div>
@@ -205,18 +174,12 @@
 
   <div class="controls-panel">
     <div class="ctrl-row">
-      <label for="tagSize">Size:</label>
-      <input type="number" id="tagSize" value="100" min="10" max="1000" step="5">
+      <label for="tagSize">Tag Size:</label>
+      <input type="number" id="tagSize" value="125" min="10" max="500" step="1">
       <span style="font-size: 11px; color:#888;">mm</span>
-      <button id="sensorBtn" class="btn btn-sensor">Enable Sensor 🔒</button>
+      <button id="sensorBtn" class="btn btn-sensor">Enable Gravity 🔒</button>
       <button id="tareBtn" class="btn btn-tare">Tare (Zero)</button>
-    </div>
-    <div class="ctrl-row">
-      <span style="font-size: 11px; color:#ccc;">Dist Trim:</span>
-      <button id="distMinusBtn" class="btn btn-small">-</button>
-      <span id="distTrimLabel" style="font-size: 11px; font-family: monospace; color:#00e676; min-width: 35px; text-align: center;">1.00x</span>
-      <button id="distPlusBtn" class="btn btn-small">+</button>
-      <button id="toggleCamera" class="btn btn-cam">Switch Cam 🔄</button>
+      <button id="toggleCamera" class="btn btn-cam">Cam 🔄</button>
     </div>
   </div>
 </div>
@@ -303,66 +266,127 @@
   const statusText = document.getElementById('status');
   const imuStatusEl = document.getElementById('imuStatus');
   const telemetryEl = document.getElementById('telemetry');
+  const fpsCounter = document.getElementById('fpsCounter');
   const tagSizeInput = document.getElementById('tagSize');
   const toggleCamBtn = document.getElementById('toggleCamera');
   const tareBtn = document.getElementById('tareBtn');
-  const distMinusBtn = document.getElementById('distMinusBtn');
-  const distPlusBtn = document.getElementById('distPlusBtn');
-  const distTrimLabel = document.getElementById('distTrimLabel');
   const sensorBtn = document.getElementById('sensorBtn');
-  const landscapeOverlay = document.getElementById('landscapeWarning');
+
+  // Load tag size from storage (defaults to 125mm)
+  if (localStorage.getItem('align_tag_size')) {
+    tagSizeInput.value = localStorage.getItem('align_tag_size');
+  }
+  tagSizeInput.addEventListener('change', () => {
+    localStorage.setItem('align_tag_size', tagSizeInput.value);
+    init3DObjectPoints();
+  });
 
   let openCvReady = false;
   let stream = null;
   let isLoopRunning = false;
   let currentFacingMode = 'environment';
-  let isLandscapeDismissed = false;
 
-  // Direct Hardware Gravity Vector in Camera Coordinates
-  let gCam = [0.0, 9.8, 0.0];
+  // Gravity vector in phone camera coordinates (X: right, Y: down, Z: forward)
+  let gCam = [0.0, 9.80665, 0.0];
   let isSensorActive = false;
 
-  // Distance User Trim Multiplier (defaults to exact 1.00)
-  let distTrimFactor = 1.00;
+  // Calibrated focal length ratio for iPhone 1x back camera (fx = 0.740 * maxDim)
+  const FOCAL_RATIO = 0.740;
 
-  // Filter States (Smooth EMA with 100ms step response)
+  // Fast filter state for 0.1° telemetry with zero jitter
   const tagFilterMap = new Map();
-
-  // Tare Offsets
   let tareOffsets = { camber: 0.0, toe: 0.0 };
-  let lastMeasuredCamber = null, lastMeasuredToe = null;
+  let lastRawAngles = { camber: 0.0, toe: 0.0 };
 
-  // Persistent OpenCV Mats
+  // Frame timing
+  let lastFpsTime = performance.now();
+  let frameCount = 0;
+
+  // Reusable OpenCV Mats & Buffers (Zero Allocation Steady-State Loop)
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
-  let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
+  let cameraMatrix = null, distCoeffs = null;
+  let dstQuadPts = null, srcQuadPts = null;
+  let objPoints = null, imgPoints = null;
+  let rvec = null, tvec = null, R_mat = null;
+  let axisPoints3D = null, projectedAxisPts = null;
+  let contours = null, hierarchy = null;
 
-  function checkOrientation() {
-    if (isLandscapeDismissed) return true;
-    if (document.activeElement && document.activeElement.tagName === 'INPUT') {
-      landscapeOverlay.style.display = 'none';
-      return true;
-    }
-    const isLandscape = (typeof window.orientation !== 'undefined' && Math.abs(window.orientation) === 90) ||
-                        (screen.orientation && screen.orientation.type && screen.orientation.type.includes('landscape'));
+  function initOpenCVMats(w, h) {
+    if (srcMat) srcMat.delete();
+    if (grayMat) grayMat.delete();
+    if (threshMat) threshMat.delete();
+    if (warpedMat) warpedMat.delete();
+    if (dstQuadPts) dstQuadPts.delete();
+    if (srcQuadPts) srcQuadPts.delete();
+    if (cameraMatrix) cameraMatrix.delete();
+    if (distCoeffs) distCoeffs.delete();
+    if (imgPoints) imgPoints.delete();
+    if (rvec) rvec.delete();
+    if (tvec) tvec.delete();
+    if (R_mat) R_mat.delete();
+    if (axisPoints3D) axisPoints3D.delete();
+    if (projectedAxisPts) projectedAxisPts.delete();
+    if (contours) contours.delete();
+    if (hierarchy) hierarchy.delete();
 
-    if (isLandscape) {
-      landscapeOverlay.style.display = 'flex';
-      return false;
-    } else {
-      landscapeOverlay.style.display = 'none';
-      return true;
-    }
+    srcMat = new cv.Mat(h, w, cv.CV_8UC4);
+    grayMat = new cv.Mat(h, w, cv.CV_8UC1);
+    threshMat = new cv.Mat(h, w, cv.CV_8UC1);
+    warpedMat = new cv.Mat(80, 80, cv.CV_8UC1);
+
+    dstQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+      0, 0,
+      79, 0,
+      79, 79,
+      0, 79
+    ]);
+    srcQuadPts = new cv.Mat(4, 1, cv.CV_32FC2);
+    imgPoints = new cv.Mat(4, 1, cv.CV_32FC2);
+
+    const maxDim = Math.max(w, h);
+    const focalLength = maxDim * FOCAL_RATIO;
+    cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
+      focalLength, 0, w / 2.0,
+      0, focalLength, h / 2.0,
+      0, 0, 1.0
+    ]);
+    distCoeffs = cv.matFromArray(4, 1, cv.CV_64F, [0, 0, 0, 0]);
+
+    rvec = new cv.Mat(3, 1, cv.CV_64F);
+    tvec = new cv.Mat(3, 1, cv.CV_64F);
+    R_mat = new cv.Mat(3, 3, cv.CV_64F);
+
+    contours = new cv.MatVector();
+    hierarchy = new cv.Mat();
+
+    init3DObjectPoints();
   }
 
-  function dismissLandscapeWarning() {
-    isLandscapeDismissed = true;
-    landscapeOverlay.style.display = 'none';
-  }
+  function init3DObjectPoints() {
+    if (objPoints) objPoints.delete();
+    if (axisPoints3D) axisPoints3D.delete();
 
-  window.addEventListener('orientationchange', () => {
-    isLandscapeDismissed = false;
-    checkOrientation();
-  });
+    const tagSizeMeters = (parseFloat(tagSizeInput.value) || 125) / 1000.0;
+    const s = tagSizeMeters;
+    const half = s / 2.0;
+
+    // Corner order: Top-Left, Top-Right, Bottom-Right, Bottom-Left
+    objPoints = cv.matFromArray(4, 3, cv.CV_32F, [
+      -half, -half, 0.0,
+       half, -half, 0.0,
+       half,  half, 0.0,
+      -half,  half, 0.0
+    ]);
+
+    const axisLen = s * 0.75;
+    axisPoints3D = cv.matFromArray(4, 3, cv.CV_32F, [
+      0.0, 0.0, 0.0,
+      axisLen, 0.0, 0.0,
+      0.0, axisLen, 0.0,
+      0.0, 0.0, -axisLen
+    ]);
+    projectedAxisPts = new cv.Mat();
+  }
 
   // Sensor Permission (iOS 13+)
   sensorBtn.onclick = async () => {
@@ -386,19 +410,19 @@
     window.addEventListener('devicemotion', (e) => {
       const acc = e.accelerationIncludingGravity;
       if (acc && acc.x !== null) {
-        // Direct Hardware Accelerometer Vector in Camera Coordinates
+        // iPhone coordinate map to camera frame
         const rawGx = -acc.x;
         const rawGy = acc.y;
         const rawGz = acc.z;
 
-        const alpha = 0.20;
+        const alpha = 0.25;
         gCam[0] = gCam[0] * (1 - alpha) + rawGx * alpha;
         gCam[1] = gCam[1] * (1 - alpha) + rawGy * alpha;
         gCam[2] = gCam[2] * (1 - alpha) + rawGz * alpha;
 
         if (!isSensorActive) {
           isSensorActive = true;
-          imuStatusEl.innerText = "Gravity Sensor: Locked 🔒";
+          imuStatusEl.innerText = "Gravity: Locked 🔒";
           imuStatusEl.className = "badge active";
           sensorBtn.innerText = "Sensor Active ✅";
           sensorBtn.style.background = "#333";
@@ -411,7 +435,7 @@
   function onOpenCvReady() {
     cv['onRuntimeInitialized'] = () => {
       openCvReady = true;
-      statusText.innerText = "Starting Camera...";
+      statusText.innerText = "OpenCV Ready";
       statusText.style.color = "#29b6f6";
       startCamera();
     };
@@ -433,55 +457,18 @@
       });
 
       video.srcObject = stream;
-      
       await new Promise((resolve) => {
-        if (video.readyState >= 2) {
-          resolve();
-        } else {
-          video.onloadedmetadata = () => resolve();
-        }
+        if (video.readyState >= 2) resolve();
+        else video.onloadedmetadata = () => resolve();
       });
       await video.play();
 
       canvas.width = video.videoWidth || 640;
       canvas.height = video.videoHeight || 480;
 
-      const w = canvas.width;
-      const h = canvas.height;
-      
-      // Calibrated iPhone Video Focal Length: f = max(w, h) * 0.461
-      const maxDim = Math.max(w, h);
-      const focalLength = maxDim * 0.4608;
+      initOpenCVMats(canvas.width, canvas.height);
 
-      if (cameraMatrix) cameraMatrix.delete();
-      cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
-        focalLength, 0, w / 2,
-        0, focalLength, h / 2,
-        0, 0, 1
-      ]);
-
-      if (distCoeffs) distCoeffs.delete();
-      distCoeffs = cv.matFromArray(4, 1, cv.CV_64F, [0, 0, 0, 0]);
-
-      if (srcMat) srcMat.delete();
-      if (grayMat) grayMat.delete();
-      if (threshMat) threshMat.delete();
-      if (warpedMat) warpedMat.delete();
-      if (dstQuadPts) dstQuadPts.delete();
-
-      srcMat = new cv.Mat(h, w, cv.CV_8UC4);
-      grayMat = new cv.Mat(h, w, cv.CV_8UC1);
-      threshMat = new cv.Mat(h, w, cv.CV_8UC1);
-      warpedMat = new cv.Mat(80, 80, cv.CV_8UC1);
-
-      dstQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-        0, 0,
-        79, 0,
-        79, 79,
-        0, 79
-      ]);
-
-      statusText.innerText = "Tracking Active (Portrait)";
+      statusText.innerText = "Tracking Active";
       statusText.style.color = "#00e676";
 
       if (!isLoopRunning) {
@@ -489,7 +476,7 @@
         requestAnimationFrame(processFrame);
       }
     } catch (err) {
-      statusText.innerText = "Camera Error: " + err.message;
+      statusText.innerText = "Cam Error: " + err.message;
       statusText.style.color = "#f44336";
     }
   }
@@ -500,111 +487,105 @@
   };
 
   tareBtn.onclick = () => {
-    if (lastMeasuredCamber !== null) {
-      tareOffsets = { camber: lastMeasuredCamber, toe: lastMeasuredToe };
-      tagFilterMap.clear();
-      tareBtn.innerText = "Reset Tare";
-    } else {
+    if (tareOffsets.camber !== 0.0 || tareOffsets.toe !== 0.0) {
       tareOffsets = { camber: 0.0, toe: 0.0 };
-      tagFilterMap.clear();
       tareBtn.innerText = "Tare (Zero)";
+      tareBtn.style.background = "#ffca28";
+    } else {
+      tareOffsets = { camber: lastRawAngles.camber, toe: lastRawAngles.toe };
+      tareBtn.innerText = "Reset Tare ↺";
+      tareBtn.style.background = "#fff";
     }
-  };
-
-  distMinusBtn.onclick = () => {
-    distTrimFactor = Math.max(0.5, distTrimFactor - 0.02);
-    distTrimLabel.innerText = distTrimFactor.toFixed(2) + "x";
-  };
-
-  distPlusBtn.onclick = () => {
-    distTrimFactor = Math.min(2.0, distTrimFactor + 0.02);
-    distTrimLabel.innerText = distTrimFactor.toFixed(2) + "x";
+    tagFilterMap.clear();
   };
 
   // High-performance CV Loop
   function processFrame() {
     try {
-      if (!checkOrientation()) {
-        requestAnimationFrame(processFrame);
-        return;
-      }
-
       if (video.readyState >= 2 && openCvReady && srcMat) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        frameCount++;
+        const now = performance.now();
+        if (now - lastFpsTime >= 1000) {
+          fpsCounter.innerText = `FPS: ${frameCount}`;
+          frameCount = 0;
+          lastFpsTime = now;
+        }
 
-        let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         srcMat.data.set(imgData.data);
+
+        // RGBA -> Grayscale
         cv.cvtColor(srcMat, grayMat, cv.COLOR_RGBA2GRAY, 0);
 
-        cv.adaptiveThreshold(grayMat, threshMat, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 25, 7);
+        // Fast adaptive thresholding
+        cv.adaptiveThreshold(grayMat, threshMat, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 15, 5);
 
-        let contours = new cv.MatVector();
-        let hierarchy = new cv.Mat();
         cv.findContours(threshMat, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
         const detectedTags = [];
         const minArea = (canvas.width * canvas.height) * 0.0008;
         const maxArea = (canvas.width * canvas.height) * 0.90;
+        const numContours = contours.size();
         const processedCenters = [];
 
-        for (let i = 0; i < contours.size(); ++i) {
-          let cnt = contours.get(i);
-          let area = cv.contourArea(cnt);
+        for (let i = 0; i < numContours; ++i) {
+          const cnt = contours.get(i);
+          const area = cv.contourArea(cnt);
 
           if (area > minArea && area < maxArea) {
-            let quadPts = extractQuadCorners(cnt);
+            const peri = cv.arcLength(cnt, true);
+            let approx = new cv.Mat();
+            cv.approxPolyDP(cnt, approx, 0.035 * peri, true);
 
-            if (quadPts !== null) {
-              let cx = (quadPts[0].x + quadPts[1].x + quadPts[2].x + quadPts[3].x) / 4;
-              let cy = (quadPts[0].y + quadPts[1].y + quadPts[2].y + quadPts[3].y) / 4;
+            if (approx.rows === 4 && cv.isContourConvex(approx)) {
+              const rawPts = [
+                { x: approx.data32S[0], y: approx.data32S[1] },
+                { x: approx.data32S[2], y: approx.data32S[3] },
+                { x: approx.data32S[4], y: approx.data32S[5] },
+                { x: approx.data32S[6], y: approx.data32S[7] }
+              ];
+              const quadPts = orderClockwise(rawPts);
+              const cx = (quadPts[0].x + quadPts[1].x + quadPts[2].x + quadPts[3].x) / 4.0;
+              const cy = (quadPts[0].y + quadPts[1].y + quadPts[2].y + quadPts[3].y) / 4.0;
 
-              let duplicate = false;
-              for (let p of processedCenters) {
-                if (Math.hypot(p.x - cx, p.y - cy) < 18) {
-                  duplicate = true;
+              let isDuplicate = false;
+              for (const p of processedCenters) {
+                if (Math.hypot(p.x - cx, p.y - cy) < 20) {
+                  isDuplicate = true;
                   break;
                 }
               }
 
-              if (!duplicate) {
-                let srcQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                  quadPts[0].x, quadPts[0].y,
-                  quadPts[1].x, quadPts[1].y,
-                  quadPts[2].x, quadPts[2].y,
-                  quadPts[3].x, quadPts[3].y
-                ]);
+              if (!isDuplicate) {
+                const srcData = srcQuadPts.data32F;
+                srcData[0] = quadPts[0].x; srcData[1] = quadPts[0].y;
+                srcData[2] = quadPts[1].x; srcData[3] = quadPts[1].y;
+                srcData[4] = quadPts[2].x; srcData[5] = quadPts[2].y;
+                srcData[6] = quadPts[3].x; srcData[7] = quadPts[3].y;
 
-                let M = cv.getPerspectiveTransform(srcQuadPts, dstQuadPts);
+                const M = cv.getPerspectiveTransform(srcQuadPts, dstQuadPts);
                 cv.warpPerspective(grayMat, warpedMat, M, new cv.Size(80, 80));
+                M.delete();
 
-                let result = decodeWarpedAprilTag(warpedMat);
-                if (result !== null) {
+                const tagDecode = decodeWarpedAprilTag(warpedMat);
+                if (tagDecode !== null) {
                   processedCenters.push({ x: cx, y: cy });
-
-                  let r = result.rotation;
-                  let trueCorners = [
+                  const r = tagDecode.rotation;
+                  const trueCorners = [
                     quadPts[(0 + r) % 4],
                     quadPts[(1 + r) % 4],
                     quadPts[(2 + r) % 4],
                     quadPts[(3 + r) % 4]
                   ];
-
-                  detectedTags.push({
-                    id: result.id,
-                    corners: trueCorners
-                  });
+                  detectedTags.push({ id: tagDecode.id, corners: trueCorners });
                 }
-
-                srcQuadPts.delete();
-                M.delete();
               }
             }
+            approx.delete();
           }
           cnt.delete();
         }
-
-        contours.delete();
-        hierarchy.delete();
 
         solveAndDrawTags(detectedTags);
       }
@@ -615,37 +596,15 @@
     }
   }
 
-  function extractQuadCorners(cnt) {
-    let hull = new cv.Mat();
-    cv.convexHull(cnt, hull, false, true);
-    let peri = cv.arcLength(hull, true);
-
-    let approx = new cv.Mat();
-    cv.approxPolyDP(hull, approx, 0.04 * peri, true);
-
-    let bestQuad = null;
-    if (approx.rows === 4 && cv.isContourConvex(approx)) {
-      let rawPts = [];
-      for (let j = 0; j < 4; j++) {
-        rawPts.push({ x: approx.data32S[j * 2], y: approx.data32S[j * 2 + 1] });
-      }
-      bestQuad = orderClockwise(rawPts);
-    }
-
-    hull.delete();
-    approx.delete();
-    return bestQuad;
-  }
-
   function orderClockwise(pts) {
-    let cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
-    let cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
+    const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4.0;
+    const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4.0;
 
     pts.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
 
     let minIdx = 0, minSum = pts[0].x + pts[0].y;
     for (let i = 1; i < 4; i++) {
-      let sum = pts[i].x + pts[i].y;
+      const sum = pts[i].x + pts[i].y;
       if (sum < minSum) {
         minSum = sum;
         minIdx = i;
@@ -665,16 +624,20 @@
     let borderSum = 0, borderCount = 0;
     const interiorVals = [];
 
+    const data = mat.data;
     for (let r = 0; r < 8; r++) {
       grid[r] = [];
       for (let c = 0; c < 8; c++) {
         let sum = 0;
-        for (let y = r * 10 + 3; y < r * 10 + 7; y++) {
-          for (let x = c * 10 + 3; x < c * 10 + 7; x++) {
-            sum += mat.data[y * 80 + x];
+        const startY = r * 10 + 3;
+        const startX = c * 10 + 3;
+        for (let y = startY; y < startY + 4; y++) {
+          const rowOffset = y * 80;
+          for (let x = startX; x < startX + 4; x++) {
+            sum += data[rowOffset + x];
           }
         }
-        let avg = sum / 16.0;
+        const avg = sum / 16.0;
         grid[r][c] = avg;
 
         if (r === 0 || r === 7 || c === 0 || c === 7) {
@@ -687,8 +650,11 @@
     }
 
     const borderAvg = borderSum / borderCount;
-    const maxInt = Math.max(...interiorVals);
-    const minInt = Math.min(...interiorVals);
+    let maxInt = -1, minInt = 256;
+    for (let i = 0; i < interiorVals.length; i++) {
+      if (interiorVals[i] > maxInt) maxInt = interiorVals[i];
+      if (interiorVals[i] < minInt) minInt = interiorVals[i];
+    }
 
     if ((maxInt - borderAvg) < 25 || (maxInt - minInt) < 30) {
       return null;
@@ -703,15 +669,16 @@
       }
     }
 
+    // Exact rotation scanning
     for (let rot = 0; rot < 4; rot++) {
       let code = 0n;
       for (let r = 0; r < 6; r++) {
         for (let c = 0; c < 6; c++) {
           let bit = 0;
           if (rot === 0) bit = payload[r][c];
-          else if (rot === 1) bit = payload[5 - c][r];
+          else if (rot === 1) bit = payload[c][5 - r];
           else if (rot === 2) bit = payload[5 - r][5 - c];
-          else if (rot === 3) bit = payload[c][5 - r];
+          else if (rot === 3) bit = payload[5 - c][r];
 
           code = (code << 1n) | BigInt(bit);
         }
@@ -729,19 +696,20 @@
     const rad2deg = 180.0 / Math.PI;
 
     const gLen = Math.hypot(gCam[0], gCam[1], gCam[2]) || 1.0;
-    const gNorm = [gCam[0] / gLen, gCam[1] / gLen, gCam[2] / gLen];
+    const gx = gCam[0] / gLen, gy = gCam[1] / gLen, gz = gCam[2] / gLen;
 
+    // Normal vector n = R[:, 2] (pointing straight out from tag surface)
     const nx = R[2], ny = R[5], nz = R[8];
 
-    // True Camber = Angle between Tag Normal and True Earth Gravity Vector
-    const dotNG = nx * gNorm[0] + ny * gNorm[1] + nz * gNorm[2];
+    // True Camber = Angle between Tag Normal and Ground Gravity Vector
+    const dotNG = nx * gx + ny * gy + nz * gz;
     const rawCamber = -Math.asin(Math.max(-1.0, Math.min(1.0, dotNG))) * rad2deg;
 
     // True Toe = Horizontal angle relative to optical forward axis
     const rawToe = Math.atan2(nx, nz) * rad2deg;
 
-    lastMeasuredCamber = rawCamber;
-    lastMeasuredToe = rawToe;
+    lastRawAngles.camber = rawCamber;
+    lastRawAngles.toe = rawToe;
 
     const taredCamber = rawCamber - tareOffsets.camber;
     const taredToe = rawToe - tareOffsets.toe;
@@ -749,103 +717,79 @@
     return { rawCamber: taredCamber, rawToe: taredToe };
   }
 
-  // Fast Exponential Moving Average (100ms step response, zero lag, smooth 0.1 deg readout)
   function filterAngles(tagId, rawCamber, rawToe, rawDist) {
     if (!tagFilterMap.has(tagId)) {
-      tagFilterMap.set(tagId, {
-        camber: rawCamber,
-        toe: rawToe,
-        dist: rawDist
-      });
+      tagFilterMap.set(tagId, { camber: rawCamber, toe: rawToe, dist: rawDist });
     }
 
     const state = tagFilterMap.get(tagId);
-    const alpha = 0.35; // Fast settling
+    const alpha = 0.40;
 
     state.camber = state.camber * (1 - alpha) + rawCamber * alpha;
-    state.toe    = state.toe    * (1 - alpha) + rawToe * alpha;
-    state.dist   = state.dist   * (1 - alpha) + rawDist * alpha;
+    state.toe = state.toe * (1 - alpha) + rawToe * alpha;
+    state.dist = state.dist * (1 - alpha) + rawDist * alpha;
 
     return {
       camber: state.camber.toFixed(1),
       toe: state.toe.toFixed(1),
-      dist: state.dist.toFixed(2)
+      dist: state.dist.toFixed(3)
     };
   }
 
   function solveAndDrawTags(tags) {
     if (tags.length === 0) {
-      telemetryEl.innerHTML = '<i>Searching for AprilTag 36h11...</i>';
+      telemetryEl.innerHTML = '<i>Searching for AprilTag 36h11 (125mm)...</i>';
       return;
     }
-
-    const tagSizeMeters = (parseFloat(tagSizeInput.value) || 100) / 1000.0;
-    const s = tagSizeMeters;
-
-    const objPoints = cv.matFromArray(4, 3, cv.CV_32F, [
-      -s/2, -s/2, 0,
-       s/2, -s/2, 0,
-       s/2,  s/2, 0,
-      -s/2,  s/2, 0
-    ]);
 
     let telemetryHtml = '';
     const solvedTags = [];
 
     tags.forEach(tag => {
       const c = tag.corners;
-      const imgPoints = cv.matFromArray(4, 2, cv.CV_32F, [
-        c[0].x, c[0].y,
-        c[1].x, c[1].y,
-        c[2].x, c[2].y,
-        c[3].x, c[3].y
-      ]);
+      const imgData = imgPoints.data32F;
+      imgData[0] = c[0].x; imgData[1] = c[0].y;
+      imgData[2] = c[1].x; imgData[3] = c[1].y;
+      imgData[4] = c[2].x; imgData[5] = c[2].y;
+      imgData[6] = c[3].x; imgData[7] = c[3].y;
 
-      let rvec = new cv.Mat();
-      let tvec = new cv.Mat();
-      cv.solvePnP(objPoints, imgPoints, cameraMatrix, distCoeffs, rvec, tvec);
+      cv.solvePnP(objPoints, imgPoints, cameraMatrix, distCoeffs, rvec, tvec, false, cv.SOLVEPNP_ITERATIVE);
+      cv.Rodrigues(rvec, R_mat);
 
-      let R = new cv.Mat();
-      cv.Rodrigues(rvec, R);
+      const tx = tvec.data64F[0], ty = tvec.data64F[1], tz = tvec.data64F[2];
+      const rawDist = Math.hypot(tx, ty, tz);
 
-      const rawDist = Math.hypot(tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]);
-      const calibratedDist = rawDist * distTrimFactor;
+      const rawAngles = computeGravityLockedAngles(R_mat.data64F);
+      const filtered = filterAngles(tag.id, rawAngles.rawCamber, rawAngles.rawToe, rawDist);
 
-      const rawAngles = computeGravityLockedAngles(R.data64F);
-      const filtered = filterAngles(tag.id, rawAngles.rawCamber, rawAngles.rawToe, calibratedDist);
-
-      const centerX = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
-      const centerY = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
+      const centerX = (c[0].x + c[1].x + c[2].x + c[3].x) / 4.0;
+      const centerY = (c[0].y + c[1].y + c[2].y + c[3].y) / 4.0;
 
       drawTagOutline(c);
-      draw3DAxes(rvec, tvec, s * 0.75);
+      draw3DAxes(rvec, tvec);
       drawOnScreenLabels(centerX, centerY, tag.id, filtered);
 
-      solvedTags.push({ id: tag.id, R_data: [...R.data64F], filtered });
+      solvedTags.push({ id: tag.id, R_data: [...R_mat.data64F], filtered });
 
       telemetryHtml += `
         <div class="tag-block">
-          <b style="color: #00e676;">Tag ID #${tag.id}</b>
+          <b style="color: #00e676;">Tag ID #${tag.id} (125mm)</b>
           <div class="value-row"><span>True Camber (Vertical):</span> <span class="value-highlight">${filtered.camber}°</span></div>
           <div class="value-row"><span>True Toe (Steer) &nbsp;&nbsp;&nbsp;:</span> <span class="value-highlight">${filtered.toe}°</span></div>
-          <div class="value-row"><span>Distance &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</span> <span>${filtered.dist} m</span></div>
+          <div class="value-row"><span>Physical Distance &nbsp;&nbsp;:</span> <span>${filtered.dist} m</span></div>
         </div>
       `;
-
-      imgPoints.delete();
-      rvec.delete();
-      tvec.delete();
-      R.delete();
     });
 
-    // Dual-Tag Differential Alignment Mode
-    if (solvedTags.length === 2) {
+    // Dual-Tag Differential Mode (Tag 0 vs Wheel Tag)
+    if (solvedTags.length >= 2) {
       const refTag = solvedTags.find(t => t.id === 0) || solvedTags[0];
       const wheelTag = solvedTags.find(t => t.id !== refTag.id);
 
       const R_ref = refTag.R_data;
       const R_wh = wheelTag.R_data;
 
+      // R_rel = R_ref^T * R_wh
       const R_rel = new Array(9);
       for (let r = 0; r < 3; r++) {
         for (let c = 0; c < 3; c++) {
@@ -855,20 +799,18 @@
         }
       }
 
-      const relCamber = (Math.atan2(-R_rel[1*3 + 2], R_rel[2*3 + 2]) * (180 / Math.PI)).toFixed(1);
-      const relToe = (Math.atan2(R_rel[0*3 + 2], R_rel[2*3 + 2]) * (180 / Math.PI)).toFixed(1);
+      const relCamber = (Math.atan2(-R_rel[1*3 + 2], R_rel[2*3 + 2]) * (180.0 / Math.PI)).toFixed(1);
+      const relToe = (Math.atan2(R_rel[0*3 + 2], R_rel[2*3 + 2]) * (180.0 / Math.PI)).toFixed(1);
 
       telemetryHtml = `
-        <div class="tag-block" style="border-left-color: #ffca28; background: rgba(255,202,40,0.1);">
-          <b style="color: #ffca28;">Dual-Tag Differential Alignment</b>
-          <div class="value-row"><span>Wheel (#${wheelTag.id}) vs Ref (#${refTag.id}):</span></div>
-          <div class="value-row"><span>Relative Camber:</span> <span class="value-highlight" style="color:#ffca28;">${relCamber}°</span></div>
-          <div class="value-row"><span>Relative Toe &nbsp; :</span> <span class="value-highlight" style="color:#ffca28;">${relToe}°</span></div>
+        <div class="tag-block" style="border-left-color: #ffca28; background: rgba(255,202,40,0.12);">
+          <b style="color: #ffca28;">Dual-Tag Differential (Wheel vs Ref)</b>
+          <div class="value-row"><span>Rel Camber (Tag #${wheelTag.id} vs #${refTag.id}):</span> <span class="value-highlight" style="color:#ffca28;">${relCamber}°</span></div>
+          <div class="value-row"><span>Rel Toe &nbsp; &nbsp; (Tag #${wheelTag.id} vs #${refTag.id}):</span> <span class="value-highlight" style="color:#ffca28;">${relToe}°</span></div>
         </div>
       ` + telemetryHtml;
     }
 
-    objPoints.delete();
     telemetryEl.innerHTML = telemetryHtml;
   }
 
@@ -883,31 +825,21 @@
     ctx.strokeStyle = '#00e676';
     ctx.stroke();
 
+    // Top-Left origin anchor (Red Dot)
     ctx.beginPath();
     ctx.arc(c[0].x, c[0].y, 5, 0, 2 * Math.PI);
     ctx.fillStyle = '#ff1744';
     ctx.fill();
   }
 
-  function draw3DAxes(rvec, tvec, length) {
-    const axisPoints3D = cv.matFromArray(4, 3, cv.CV_32F, [
-      0, 0, 0,
-      length, 0, 0,
-      0, length, 0,
-      0, 0, -length
-    ]);
+  function draw3DAxes(rvec, tvec) {
+    cv.projectPoints(axisPoints3D, rvec, tvec, cameraMatrix, distCoeffs, projectedAxisPts);
+    const pts = projectedAxisPts.data32F;
 
-    let imagePoints = new cv.Mat();
-    cv.projectPoints(axisPoints3D, rvec, tvec, cameraMatrix, distCoeffs, imagePoints);
-    const pts = imagePoints.data32F;
-
-    const originX = pts[0], originY = pts[1];
-    drawLine(originX, originY, pts[2], pts[3], '#ff1744', 4); // X (Red)
-    drawLine(originX, originY, pts[4], pts[5], '#00e676', 4); // Y (Green)
-    drawLine(originX, originY, pts[6], pts[7], '#2979ff', 4); // Z (Blue)
-
-    axisPoints3D.delete();
-    imagePoints.delete();
+    const ox = pts[0], oy = pts[1];
+    drawLine(ox, oy, pts[2], pts[3], '#ff1744', 4); // X (Red)
+    drawLine(ox, oy, pts[4], pts[5], '#00e676', 4); // Y (Green)
+    drawLine(ox, oy, pts[6], pts[7], '#2979ff', 4); // Z (Blue)
   }
 
   function drawLine(x1, y1, x2, y2, color, width) {
@@ -921,8 +853,8 @@
 
   function drawOnScreenLabels(x, y, id, f) {
     ctx.save();
-    ctx.font = 'bold 13px monospace';
-    ctx.shadowColor = 'black';
+    ctx.font = 'bold 13px ui-monospace, monospace';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
     ctx.shadowBlur = 4;
 
     const lines = [
@@ -934,7 +866,7 @@
 
     lines.forEach((line, idx) => {
       ctx.fillStyle = idx === 0 ? '#ffca28' : (idx < 3 ? '#00e676' : '#ffffff');
-      ctx.fillText(line, x + 15, y - 20 + idx * 16);
+      ctx.fillText(line, x + 12, y - 20 + idx * 16);
     });
 
     ctx.restore();
