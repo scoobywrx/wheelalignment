@@ -190,7 +190,7 @@
       <h1>AprilTag Alignment</h1>
       <span id="imuStatus" class="badge">Sensor: Inactive</span>
     </div>
-    <div>Status: <span id="status" style="font-weight: bold; color: #fbc02d;">Loading OpenCV...</span></div>
+    <div>Status: <span id="status" style="font-weight: bold; color: #fbc02d;">Loading OpenCV WASM...</span></div>
     <div id="telemetry" style="margin-top: 4px; border-top: 1px solid #333; padding-top: 4px;">
       <i>Starting camera...</i>
     </div>
@@ -326,7 +326,6 @@
   // OpenCV Persistent Mats
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
   let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
-  let subpixCriteria = null;
 
   function checkOrientation() {
     if (isLandscapeDismissed) return true;
@@ -378,7 +377,6 @@
     window.addEventListener('devicemotion', (e) => {
       const acc = e.accelerationIncludingGravity;
       if (acc && acc.x !== null) {
-        // Direct Hardware Accelerometer Vector in Camera Coordinates
         const rawGx = -acc.x;
         const rawGy = acc.y;
         const rawGz = acc.z;
@@ -405,12 +403,11 @@
       openCvReady = true;
       statusText.innerText = "Starting Camera...";
       statusText.style.color = "#29b6f6";
-      subpixCriteria = new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 20, 0.02);
       startCamera();
     };
   }
 
-  // Direct, single-pass camera initialization (zero dummy stream restarts)
+  // Reliable, direct camera initialization
   async function startCamera() {
     if (stream) {
       stream.getTracks().forEach(t => t.stop());
@@ -427,55 +424,62 @@
       });
 
       video.srcObject = stream;
+      
+      // Wait for video to have metadata ready
+      await new Promise((resolve) => {
+        if (video.readyState >= 2) {
+          resolve();
+        } else {
+          video.onloadedmetadata = () => resolve();
+        }
+      });
       await video.play();
 
-      video.onloadeddata = () => {
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 480;
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
 
-        const w = canvas.width;
-        const h = canvas.height;
-        
-        // Exact Calibrated iPhone Wide Camera Focal Length based on sensor max dimension
-        const maxDim = Math.max(w, h);
-        const focalLength = maxDim * 0.741;
+      const w = canvas.width;
+      const h = canvas.height;
+      
+      // Exact Calibrated Focal Length based on sensor maximum dimension
+      const maxDim = Math.max(w, h);
+      const focalLength = maxDim * 0.741;
 
-        if (cameraMatrix) cameraMatrix.delete();
-        cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
-          focalLength, 0, w / 2,
-          0, focalLength, h / 2,
-          0, 0, 1
-        ]);
+      if (cameraMatrix) cameraMatrix.delete();
+      cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
+        focalLength, 0, w / 2,
+        0, focalLength, h / 2,
+        0, 0, 1
+      ]);
 
-        if (distCoeffs) distCoeffs.delete();
-        distCoeffs = cv.matFromArray(4, 1, cv.CV_64F, [0, 0, 0, 0]);
+      if (distCoeffs) distCoeffs.delete();
+      distCoeffs = cv.matFromArray(4, 1, cv.CV_64F, [0, 0, 0, 0]);
 
-        if (srcMat) srcMat.delete();
-        if (grayMat) grayMat.delete();
-        if (threshMat) threshMat.delete();
-        if (warpedMat) warpedMat.delete();
-        if (dstQuadPts) dstQuadPts.delete();
+      if (srcMat) srcMat.delete();
+      if (grayMat) grayMat.delete();
+      if (threshMat) threshMat.delete();
+      if (warpedMat) warpedMat.delete();
+      if (dstQuadPts) dstQuadPts.delete();
 
-        srcMat = new cv.Mat(h, w, cv.CV_8UC4);
-        grayMat = new cv.Mat(h, w, cv.CV_8UC1);
-        threshMat = new cv.Mat(h, w, cv.CV_8UC1);
-        warpedMat = new cv.Mat(80, 80, cv.CV_8UC1);
+      srcMat = new cv.Mat(h, w, cv.CV_8UC4);
+      grayMat = new cv.Mat(h, w, cv.CV_8UC1);
+      threshMat = new cv.Mat(h, w, cv.CV_8UC1);
+      warpedMat = new cv.Mat(80, 80, cv.CV_8UC1);
 
-        dstQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-          0, 0,
-          79, 0,
-          79, 79,
-          0, 79
-        ]);
+      dstQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        0, 0,
+        79, 0,
+        79, 79,
+        0, 79
+      ]);
 
-        statusText.innerText = "Tracking Active (Portrait)";
-        statusText.style.color = "#00e676";
+      statusText.innerText = "Tracking Active (Portrait)";
+      statusText.style.color = "#00e676";
 
-        if (!isLoopRunning) {
-          isLoopRunning = true;
-          requestAnimationFrame(processFrame);
-        }
-      };
+      if (!isLoopRunning) {
+        isLoopRunning = true;
+        requestAnimationFrame(processFrame);
+      }
     } catch (err) {
       statusText.innerText = "Camera Error: " + err.message;
       statusText.style.color = "#f44336";
@@ -509,7 +513,6 @@
     }
   };
 
-  // High-performance CV Loop
   function processFrame() {
     try {
       if (!checkOrientation()) {
@@ -517,7 +520,7 @@
         return;
       }
 
-      if (video.readyState === video.HAVE_ENOUGH_DATA && openCvReady && srcMat) {
+      if (video.readyState >= 2 && openCvReady && srcMat) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         let imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -555,13 +558,11 @@
               }
 
               if (!duplicate) {
-                let refinedCorners = refineCornersSubPix(grayMat, quadPts);
-
                 let srcQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                  refinedCorners[0].x, refinedCorners[0].y,
-                  refinedCorners[1].x, refinedCorners[1].y,
-                  refinedCorners[2].x, refinedCorners[2].y,
-                  refinedCorners[3].x, refinedCorners[3].y
+                  quadPts[0].x, quadPts[0].y,
+                  quadPts[1].x, quadPts[1].y,
+                  quadPts[2].x, quadPts[2].y,
+                  quadPts[3].x, quadPts[3].y
                 ]);
 
                 let M = cv.getPerspectiveTransform(srcQuadPts, dstQuadPts);
@@ -573,10 +574,10 @@
 
                   let r = result.rotation;
                   let trueCorners = [
-                    refinedCorners[(0 + r) % 4],
-                    refinedCorners[(1 + r) % 4],
-                    refinedCorners[(2 + r) % 4],
-                    refinedCorners[(3 + r) % 4]
+                    quadPts[(0 + r) % 4],
+                    quadPts[(1 + r) % 4],
+                    quadPts[(2 + r) % 4],
+                    quadPts[(3 + r) % 4]
                   ];
 
                   detectedTags.push({
@@ -602,33 +603,6 @@
       console.error("Pipeline error:", err);
     } finally {
       requestAnimationFrame(processFrame);
-    }
-  }
-
-  function refineCornersSubPix(gray, pts) {
-    try {
-      let cornerMat = cv.matFromArray(4, 1, cv.CV_32FC2, [
-        pts[0].x, pts[0].y,
-        pts[1].x, pts[1].y,
-        pts[2].x, pts[2].y,
-        pts[3].x, pts[3].y
-      ]);
-
-      let winSize = new cv.Size(4, 4);
-      let zeroZone = new cv.Size(-1, -1);
-      cv.cornerSubPix(gray, cornerMat, winSize, zeroZone, subpixCriteria);
-
-      let refined = [
-        { x: cornerMat.data32F[0], y: cornerMat.data32F[1] },
-        { x: cornerMat.data32F[2], y: cornerMat.data32F[3] },
-        { x: cornerMat.data32F[4], y: cornerMat.data32F[5] },
-        { x: cornerMat.data32F[6], y: cornerMat.data32F[7] }
-      ];
-
-      cornerMat.delete();
-      return refined;
-    } catch (e) {
-      return pts;
     }
   }
 
@@ -750,7 +724,7 @@
 
     const nx = R[2], ny = R[5], nz = R[8];
 
-    // True Camber = Angle with Earth Gravity Vector
+    // True Camber = Angle between Tag Normal and True Earth Gravity Vector
     const dotNG = nx * gNorm[0] + ny * gNorm[1] + nz * gNorm[2];
     const rawCamber = -Math.asin(Math.max(-1.0, Math.min(1.0, dotNG))) * rad2deg;
 
