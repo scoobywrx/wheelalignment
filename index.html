@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>AprilTag 36h11 3D Pose Tracker</title>
+  <title>AprilTag 36h11 Alignment & Inclinometer</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -37,7 +37,7 @@
       border-radius: 12px;
       font-size: 13px;
       line-height: 1.5;
-      max-width: 340px;
+      max-width: 350px;
       z-index: 10;
       border: 1px solid rgba(255, 255, 255, 0.18);
       box-shadow: 0 4px 20px rgba(0,0,0,0.5);
@@ -56,11 +56,11 @@
       transform: translateX(-50%);
       background: rgba(10, 10, 10, 0.88);
       backdrop-filter: blur(10px);
-      padding: 8px 18px;
+      padding: 8px 16px;
       border-radius: 30px;
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       z-index: 10;
       border: 1px solid rgba(255, 255, 255, 0.18);
     }
@@ -69,7 +69,7 @@
       color: #ccc;
     }
     .controls input {
-      width: 60px;
+      width: 55px;
       padding: 4px 6px;
       background: #222;
       border: 1px solid #555;
@@ -81,25 +81,33 @@
       background: #00e676;
       border: none;
       color: #111;
-      padding: 6px 14px;
+      padding: 6px 12px;
       border-radius: 20px;
       cursor: pointer;
       font-size: 12px;
       font-weight: bold;
     }
-    .controls button:hover { background: #00c853; }
+    .controls button.tare-btn {
+      background: #ffca28;
+    }
+    .controls button:hover { opacity: 0.9; }
     #status { font-weight: bold; color: #fbc02d; }
     .value-row {
       display: flex;
       justify-content: space-between;
       font-family: monospace;
-      font-size: 12px;
+      font-size: 12.5px;
+      margin: 2px 0;
+    }
+    .value-highlight {
+      font-weight: bold;
+      color: #00e676;
     }
     .tag-block {
       margin-top: 8px;
-      padding: 6px 8px;
+      padding: 8px 10px;
       background: rgba(255, 255, 255, 0.06);
-      border-left: 3px solid #00e676;
+      border-left: 4px solid #00e676;
       border-radius: 4px;
     }
   </style>
@@ -112,7 +120,7 @@
   <canvas id="outputCanvas"></canvas>
 
   <div class="hud">
-    <h1>AprilTag (36h11) 3D Tracker</h1>
+    <h1>AprilTag Alignment & Inclinometer</h1>
     <div>Status: <span id="status">Loading OpenCV...</span></div>
     <div id="telemetry" style="margin-top: 8px; border-top: 1px solid #333; padding-top: 6px;">
       <i>Starting camera...</i>
@@ -120,9 +128,10 @@
   </div>
 
   <div class="controls">
-    <label for="tagSize">Tag Size (mm):</label>
+    <label for="tagSize">Size(mm):</label>
     <input type="number" id="tagSize" value="100" min="10" max="1000" step="5">
-    <button id="toggleCamera">Switch Cam 🔄</button>
+    <button id="tareBtn" class="tare-btn">Tare (Zero)</button>
+    <button id="toggleCamera">Cam 🔄</button>
   </div>
 </div>
 
@@ -210,12 +219,17 @@
   const telemetryEl = document.getElementById('telemetry');
   const tagSizeInput = document.getElementById('tagSize');
   const toggleCamBtn = document.getElementById('toggleCamera');
+  const tareBtn = document.getElementById('tareBtn');
 
   let openCvReady = false;
   let stream = null;
   let isLoopRunning = false;
   let videoDevices = [];
   let currentDeviceIndex = 0;
+
+  // Tare baseline offsets
+  let tareOffsets = { vertical: 0.0, horizontal: 0.0, roll: 0.0 };
+  let lastMeasuredAngles = null;
 
   // OpenCV resources
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
@@ -230,10 +244,8 @@
     };
   }
 
-  // Enumerate all physical lenses (Back Wide, Ultra-Wide, Front)
   async function initCameraList() {
     try {
-      // First quick request to get permission so device labels become visible
       const tempStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
         audio: false
@@ -243,7 +255,6 @@
       const devices = await navigator.mediaDevices.enumerateDevices();
       videoDevices = devices.filter(d => d.kind === 'videoinput');
 
-      // Prefer back/rear/environment cameras
       const backIndex = videoDevices.findIndex(d => 
         d.label.toLowerCase().includes('back') || 
         d.label.toLowerCase().includes('rear') || 
@@ -253,7 +264,7 @@
       currentDeviceIndex = backIndex !== -1 ? backIndex : 0;
       startCamera();
     } catch (err) {
-      console.warn("Fallback to generic camera constraints:", err);
+      console.warn("Camera enumeration error:", err);
       startCamera();
     }
   }
@@ -337,12 +348,25 @@
     }
   }
 
-  // Cycle through all available camera hardware lenses
   toggleCamBtn.onclick = () => {
     if (videoDevices.length > 1) {
       currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
     }
     startCamera();
+  };
+
+  tareBtn.onclick = () => {
+    if (lastMeasuredAngles) {
+      tareOffsets = {
+        vertical: lastMeasuredAngles.rawVertical,
+        horizontal: lastMeasuredAngles.rawHorizontal,
+        roll: lastMeasuredAngles.rawRoll
+      };
+      tareBtn.innerText = "Reset Tare";
+    } else {
+      tareOffsets = { vertical: 0.0, horizontal: 0.0, roll: 0.0 };
+      tareBtn.innerText = "Tare (Zero)";
+    }
   };
 
   function processFrame() {
@@ -546,9 +570,45 @@
     return null;
   }
 
+  // Calculates true geometric angles vs vertical (camber) and horizontal (toe)
+  function computeGeometricAngles(R) {
+    const r00 = R[0], r01 = R[1], r02 = R[2];
+    const r10 = R[3], r11 = R[4], r12 = R[5];
+    const r20 = R[6], r21 = R[7], r22 = R[8];
+    const rad2deg = 180 / Math.PI;
+
+    // 1. Tilt from Vertical Plumb Line (Pitch / Camber)
+    const rawVertical = Math.atan2(-r12, r22) * rad2deg;
+
+    // 2. Turn Angle from Horizontal Centerline (Yaw / Toe)
+    const rawHorizontal = Math.atan2(r02, r22) * rad2deg;
+
+    // 3. Face Incline / Roll
+    const rawRoll = Math.atan2(r10, r00) * rad2deg;
+
+    // 4. Absolute angle with flat floor (0° = flat level, 90° = vertical wall)
+    const floorIncline = Math.abs(Math.acos(Math.max(-1, Math.min(1, r12))) * rad2deg - 90);
+
+    // Apply Tare adjustments
+    const taredVertical = rawVertical - tareOffsets.vertical;
+    const taredHorizontal = rawHorizontal - tareOffsets.horizontal;
+    const taredRoll = rawRoll - tareOffsets.roll;
+
+    return {
+      vertical: taredVertical.toFixed(2),
+      horizontal: taredHorizontal.toFixed(2),
+      roll: taredRoll.toFixed(2),
+      floorIncline: floorIncline.toFixed(1),
+      rawVertical,
+      rawHorizontal,
+      rawRoll
+    };
+  }
+
   function solveAndDrawTags(tags) {
     if (tags.length === 0) {
       telemetryEl.innerHTML = '<i>Searching for AprilTag 36h11...</i>';
+      lastMeasuredAngles = null;
       return;
     }
 
@@ -580,7 +640,9 @@
       let R = new cv.Mat();
       cv.Rodrigues(rvec, R);
 
-      const euler = rotationMatrixToEuler(R.data64F);
+      const angles = computeGeometricAngles(R.data64F);
+      lastMeasuredAngles = angles;
+
       const tx = tvec.data64F[0];
       const ty = tvec.data64F[1];
       const tz = tvec.data64F[2];
@@ -591,16 +653,15 @@
 
       drawTagOutline(c);
       draw3DAxes(rvec, tvec, s * 0.75);
-      drawOnScreenLabels(centerX, centerY, tag.id, euler, distance);
+      drawOnScreenLabels(centerX, centerY, tag.id, angles, distance);
 
       telemetryHtml += `
         <div class="tag-block">
           <b style="color: #00e676;">Tag ID #${tag.id}</b>
-          <div class="value-row"><span>Pitch (X):</span> <span>${euler.pitch}°</span></div>
-          <div class="value-row"><span>Yaw &nbsp;&nbsp;(Y):</span> <span>${euler.yaw}°</span></div>
-          <div class="value-row"><span>Roll &nbsp;(Z):</span> <span>${euler.roll}°</span></div>
-          <div class="value-row"><span>XYZ (m)&nbsp;:</span> <span>[${tx.toFixed(2)}, ${ty.toFixed(2)}, ${tz.toFixed(2)}]</span></div>
-          <div class="value-row"><span>Distance:</span> <span>${distance.toFixed(2)} m</span></div>
+          <div class="value-row"><span>Vertical Tilt (Camber):</span> <span class="value-highlight">${angles.vertical}°</span></div>
+          <div class="value-row"><span>Horizontal Turn (Toe):</span> <span class="value-highlight">${angles.horizontal}°</span></div>
+          <div class="value-row"><span>Face Roll (Incline) &nbsp;:</span> <span>${angles.roll}°</span></div>
+          <div class="value-row"><span>Distance &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</span> <span>${distance.toFixed(2)} m</span></div>
         </div>
       `;
 
@@ -612,33 +673,6 @@
 
     objPoints.delete();
     telemetryEl.innerHTML = telemetryHtml;
-  }
-
-  function rotationMatrixToEuler(R) {
-    const r00 = R[0], r01 = R[1], r02 = R[2];
-    const r10 = R[3], r11 = R[4], r12 = R[5];
-    const r20 = R[6], r21 = R[7], r22 = R[8];
-
-    let pitch, yaw, roll;
-    const sy = Math.sqrt(r00 * r00 + r10 * r10);
-    const singular = sy < 1e-6;
-
-    if (!singular) {
-      pitch = Math.atan2(r21, r22);
-      yaw   = Math.atan2(-r20, sy);
-      roll  = Math.atan2(r10, r00);
-    } else {
-      pitch = Math.atan2(-r12, r11);
-      yaw   = Math.atan2(-r20, sy);
-      roll  = 0;
-    }
-
-    const rad2deg = 180 / Math.PI;
-    return {
-      pitch: (pitch * rad2deg).toFixed(1),
-      yaw:   (yaw * rad2deg).toFixed(1),
-      roll:  (roll * rad2deg).toFixed(1)
-    };
   }
 
   function drawTagOutline(c) {
@@ -688,7 +722,7 @@
     ctx.stroke();
   }
 
-  function drawOnScreenLabels(x, y, id, euler, dist) {
+  function drawOnScreenLabels(x, y, id, angles, dist) {
     ctx.save();
     ctx.font = 'bold 13px monospace';
     ctx.shadowColor = 'black';
@@ -696,15 +730,14 @@
 
     const lines = [
       `ID #${id}`,
-      `P: ${euler.pitch}°`,
-      `Y: ${euler.yaw}°`,
-      `R: ${euler.roll}°`,
-      `D: ${dist.toFixed(2)}m`
+      `Vert (Camber): ${angles.vertical}°`,
+      `Horiz  (Toe) : ${angles.horizontal}°`,
+      `Dist: ${dist.toFixed(2)}m`
     ];
 
     lines.forEach((line, idx) => {
-      ctx.fillStyle = idx === 0 ? '#00e676' : '#ffffff';
-      ctx.fillText(line, x + 15, y - 25 + idx * 16);
+      ctx.fillStyle = idx === 0 ? '#ffca28' : (idx < 3 ? '#00e676' : '#ffffff');
+      ctx.fillText(line, x + 15, y - 20 + idx * 16);
     });
 
     ctx.restore();
