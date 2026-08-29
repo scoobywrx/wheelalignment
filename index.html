@@ -122,7 +122,7 @@
   <div class="controls">
     <label for="tagSize">Tag Size (mm):</label>
     <input type="number" id="tagSize" value="100" min="10" max="1000" step="5">
-    <button id="toggleCamera">Switch Cam</button>
+    <button id="toggleCamera">Switch Cam 🔄</button>
   </div>
 </div>
 
@@ -212,9 +212,10 @@
   const toggleCamBtn = document.getElementById('toggleCamera');
 
   let openCvReady = false;
-  let currentFacingMode = 'environment';
   let stream = null;
   let isLoopRunning = false;
+  let videoDevices = [];
+  let currentDeviceIndex = 0;
 
   // OpenCV resources
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
@@ -223,10 +224,38 @@
   function onOpenCvReady() {
     cv['onRuntimeInitialized'] = () => {
       openCvReady = true;
-      statusText.innerText = "OpenCV Initialized";
+      statusText.innerText = "Initializing Camera...";
       statusText.style.color = "#29b6f6";
-      startCamera();
+      initCameraList();
     };
+  }
+
+  // Enumerate all physical lenses (Back Wide, Ultra-Wide, Front)
+  async function initCameraList() {
+    try {
+      // First quick request to get permission so device labels become visible
+      const tempStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false
+      });
+      tempStream.getTracks().forEach(t => t.stop());
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      videoDevices = devices.filter(d => d.kind === 'videoinput');
+
+      // Prefer back/rear/environment cameras
+      const backIndex = videoDevices.findIndex(d => 
+        d.label.toLowerCase().includes('back') || 
+        d.label.toLowerCase().includes('rear') || 
+        d.label.toLowerCase().includes('environment')
+      );
+      
+      currentDeviceIndex = backIndex !== -1 ? backIndex : 0;
+      startCamera();
+    } catch (err) {
+      console.warn("Fallback to generic camera constraints:", err);
+      startCamera();
+    }
   }
 
   async function startCamera() {
@@ -235,12 +264,19 @@
     }
 
     try {
+      let videoConstraints = {
+        width: { ideal: 1280 },
+        height: { ideal: 720 }
+      };
+
+      if (videoDevices.length > 0 && videoDevices[currentDeviceIndex]) {
+        videoConstraints.deviceId = { exact: videoDevices[currentDeviceIndex].deviceId };
+      } else {
+        videoConstraints.facingMode = { ideal: "environment" };
+      }
+
       stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: currentFacingMode,
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
+        video: videoConstraints,
         audio: false
       });
 
@@ -276,7 +312,6 @@
         threshMat = new cv.Mat(h, w, cv.CV_8UC1);
         warpedMat = new cv.Mat(80, 80, cv.CV_8UC1);
 
-        // Canonical 80x80 quadrilateral coordinates
         dstQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
           0, 0,
           79, 0,
@@ -284,7 +319,10 @@
           0, 79
         ]);
 
-        statusText.innerText = "Tracking Active (36h11)";
+        const label = (videoDevices[currentDeviceIndex] && videoDevices[currentDeviceIndex].label) 
+                      ? videoDevices[currentDeviceIndex].label.substring(0, 18) 
+                      : "Active";
+        statusText.innerText = `Live (${label})`;
         statusText.style.color = "#00e676";
 
         if (!isLoopRunning) {
@@ -299,8 +337,11 @@
     }
   }
 
+  // Cycle through all available camera hardware lenses
   toggleCamBtn.onclick = () => {
-    currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+    if (videoDevices.length > 1) {
+      currentDeviceIndex = (currentDeviceIndex + 1) % videoDevices.length;
+    }
     startCamera();
   };
 
@@ -313,7 +354,6 @@
         srcMat.data.set(imgData.data);
         cv.cvtColor(srcMat, grayMat, cv.COLOR_RGBA2GRAY, 0);
 
-        // Robust adaptive binarization for tag detection
         cv.adaptiveThreshold(grayMat, threshMat, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 25, 7);
 
         let contours = new cv.MatVector();
@@ -336,7 +376,6 @@
               let cx = (quadPts[0].x + quadPts[1].x + quadPts[2].x + quadPts[3].x) / 4;
               let cy = (quadPts[0].y + quadPts[1].y + quadPts[2].y + quadPts[3].y) / 4;
 
-              // De-duplicate overlapping inner/outer quad boundaries
               let duplicate = false;
               for (let p of processedCenters) {
                 if (Math.hypot(p.x - cx, p.y - cy) < 18) {
@@ -360,7 +399,6 @@
                 if (result !== null) {
                   processedCenters.push({ x: cx, y: cy });
 
-                  // Align 4 corner points according to the tag's true orientation
                   let r = result.rotation;
                   let trueCorners = [
                     quadPts[(0 + r) % 4],
@@ -386,7 +424,6 @@
         contours.delete();
         hierarchy.delete();
 
-        // 3D Pose Estimation & Overlay Rendering
         solveAndDrawTags(detectedTags);
       }
     } catch (err) {
@@ -396,7 +433,6 @@
     }
   }
 
-  // Extracts 4 convex quadrilateral corners using multi-scale hull approximation
   function extractQuadCorners(cnt) {
     let hull = new cv.Mat();
     cv.convexHull(cnt, hull, false, true);
@@ -405,7 +441,6 @@
     let approx = new cv.Mat();
     let bestQuad = null;
 
-    // Search epsilon scale for 4-vertex polygon
     for (let epsFactor = 0.03; epsFactor <= 0.12; epsFactor += 0.015) {
       cv.approxPolyDP(hull, approx, epsFactor * peri, true);
       if (approx.rows === 4 && cv.isContourConvex(approx)) {
@@ -429,7 +464,6 @@
 
     pts.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
 
-    // Sort starting with top-left (minimum x + y)
     let minIdx = 0, minSum = pts[0].x + pts[0].y;
     for (let i = 1; i < 4; i++) {
       let sum = pts[i].x + pts[i].y;
@@ -447,7 +481,6 @@
     ];
   }
 
-  // Decodes 8x8 AprilTag grid (1-cell border + 6x6 interior)
   function decodeWarpedAprilTag(mat) {
     const grid = [];
     let borderSum = 0, borderCount = 0;
@@ -457,7 +490,6 @@
       grid[r] = [];
       for (let c = 0; c < 8; c++) {
         let sum = 0;
-        // Sample center 4x4 sub-region of each 10x10 cell
         for (let y = r * 10 + 3; y < r * 10 + 7; y++) {
           for (let x = c * 10 + 3; x < c * 10 + 7; x++) {
             sum += mat.data[y * 80 + x];
@@ -479,7 +511,6 @@
     const maxInt = Math.max(...interiorVals);
     const minInt = Math.min(...interiorVals);
 
-    // Validate dark border presence and contrast
     if ((maxInt - borderAvg) < 25 || (maxInt - minInt) < 30) {
       return null;
     }
@@ -493,7 +524,6 @@
       }
     }
 
-    // Evaluate all 4 rotations (0°, 90°, 180°, 270°)
     for (let rot = 0; rot < 4; rot++) {
       let code = 0n;
       for (let r = 0; r < 6; r++) {
@@ -516,7 +546,6 @@
     return null;
   }
 
-  // 3D SolvePnP, Metric Pose & Coordinate Frame Rendering
   function solveAndDrawTags(tags) {
     if (tags.length === 0) {
       telemetryEl.innerHTML = '<i>Searching for AprilTag 36h11...</i>';
@@ -526,7 +555,6 @@
     const tagSizeMeters = (parseFloat(tagSizeInput.value) || 100) / 1000.0;
     const s = tagSizeMeters;
 
-    // Real-world 3D coordinates in tag frame
     const objPoints = cv.matFromArray(4, 3, cv.CV_32F, [
       -s/2, -s/2, 0,
        s/2, -s/2, 0,
@@ -561,13 +589,8 @@
       const centerX = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
       const centerY = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
 
-      // Draw green boundary polygon & corner dot
       drawTagOutline(c);
-
-      // Project & Draw 3D XYZ coordinate axes
       draw3DAxes(rvec, tvec, s * 0.75);
-
-      // Floating label above tag
       drawOnScreenLabels(centerX, centerY, tag.id, euler, distance);
 
       telemetryHtml += `
@@ -629,7 +652,6 @@
     ctx.strokeStyle = '#00e676';
     ctx.stroke();
 
-    // Red dot indicating top-left corner (Corner 0)
     ctx.beginPath();
     ctx.arc(c[0].x, c[0].y, 5, 0, 2 * Math.PI);
     ctx.fillStyle = '#ff1744';
@@ -649,9 +671,9 @@
     const pts = imagePoints.data32F;
 
     const originX = pts[0], originY = pts[1];
-    drawLine(originX, originY, pts[2], pts[3], '#ff1744', 4); // X-Axis (Red)
-    drawLine(originX, originY, pts[4], pts[5], '#00e676', 4); // Y-Axis (Green)
-    drawLine(originX, originY, pts[6], pts[7], '#2979ff', 4); // Z-Axis (Blue)
+    drawLine(originX, originY, pts[2], pts[3], '#ff1744', 4); // X (Red)
+    drawLine(originX, originY, pts[4], pts[5], '#00e676', 4); // Y (Green)
+    drawLine(originX, originY, pts[6], pts[7], '#2979ff', 4); // Z (Blue)
 
     axisPoints3D.delete();
     imagePoints.delete();
