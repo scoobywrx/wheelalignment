@@ -35,10 +35,10 @@
       top: max(12px, env(safe-area-inset-top));
       left: 12px;
       right: 12px;
-      background: rgba(12, 12, 12, 0.88);
+      background: rgba(12, 12, 12, 0.90);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      padding: 12px 14px;
+      padding: 12px 16px;
       border-radius: 12px;
       font-size: 13px;
       line-height: 1.4;
@@ -94,7 +94,7 @@
       color: #ccc;
     }
     .controls input {
-      width: 48px;
+      width: 46px;
       padding: 4px 4px;
       background: #222;
       border: 1px solid #555;
@@ -125,16 +125,17 @@
       display: flex;
       justify-content: space-between;
       font-family: monospace;
-      font-size: 13px;
-      margin: 2px 0;
+      font-size: 13.5px;
+      margin: 3px 0;
     }
     .value-highlight {
       font-weight: bold;
       color: #00e676;
+      font-size: 14px;
     }
     .tag-block {
       margin-top: 6px;
-      padding: 6px 8px;
+      padding: 6px 10px;
       background: rgba(255, 255, 255, 0.06);
       border-left: 3px solid #00e676;
       border-radius: 4px;
@@ -262,9 +263,15 @@
   let videoDevices = [];
   let currentDeviceIndex = 0;
 
-  // IMU Hardware State (iOS Euler angles in degrees)
+  // IMU Hardware State (iOS Euler angles with Low-Pass Smoothing)
+  let rawAlpha = 0.0, rawBeta = 90.0, rawGamma = 0.0;
   let phoneAlpha = 0.0, phoneBeta = 90.0, phoneGamma = 0.0;
   let isSensorActive = false;
+
+  // Temporal Smoothing Filter for Optical Measurements
+  let filteredCamber = null;
+  let filteredToe = null;
+  let filteredDist = null;
 
   // Tare Offsets
   let tareOffsets = { camber: 0.0, toe: 0.0 };
@@ -273,6 +280,7 @@
   // OpenCV resources
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
   let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
+  let subpixCriteria = null;
 
   // Explicit iOS Sensor Permission Trigger
   sensorBtn.onclick = async () => {
@@ -295,16 +303,22 @@
   function attachSensorListeners() {
     window.addEventListener('deviceorientation', (e) => {
       if (e.beta !== null) {
-        phoneAlpha = e.alpha || 0.0;
-        phoneBeta = e.beta || 90.0;
-        phoneGamma = e.gamma || 0.0;
+        rawAlpha = e.alpha || 0.0;
+        rawBeta = e.beta || 90.0;
+        rawGamma = e.gamma || 0.0;
+
+        // Smooth sensor noise
+        const sAlpha = 0.20;
+        phoneAlpha = phoneAlpha * (1 - sAlpha) + rawAlpha * sAlpha;
+        phoneBeta  = phoneBeta  * (1 - sAlpha) + rawBeta  * sAlpha;
+        phoneGamma = phoneGamma * (1 - sAlpha) + rawGamma * sAlpha;
 
         if (!isSensorActive) {
           isSensorActive = true;
           imuStatusEl.innerText = "Gravity Sensor: Locked 🔒";
           imuStatusEl.className = "badge active";
           sensorBtn.innerText = "Sensor Active ✅";
-          sensorBtn.style.background = "#444";
+          sensorBtn.style.background = "#333";
           sensorBtn.style.color = "#fff";
         }
       }
@@ -316,6 +330,10 @@
       openCvReady = true;
       statusText.innerText = "Initializing Camera...";
       statusText.style.color = "#29b6f6";
+
+      // Sub-pixel corner optimization criteria (max 30 iterations or 0.01 precision)
+      subpixCriteria = new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 30, 0.01);
+
       initCameraList();
     };
   }
@@ -375,7 +393,7 @@
         const w = canvas.width;
         const h = canvas.height;
         
-        // Calibrated iPhone Camera Pinhole Model (approx 68 deg HFOV)
+        // Calibrated iPhone Camera Pinhole Model
         const focalLength = w * 0.82;
 
         if (cameraMatrix) cameraMatrix.delete();
@@ -433,9 +451,14 @@
         camber: lastAngles.rawCamber,
         toe: lastAngles.rawToe
       };
+      // Reset filter for instant response
+      filteredCamber = null;
+      filteredToe = null;
       tareBtn.innerText = "Reset Tare";
     } else {
       tareOffsets = { camber: 0.0, toe: 0.0 };
+      filteredCamber = null;
+      filteredToe = null;
       tareBtn.innerText = "Tare";
     }
   };
@@ -480,11 +503,14 @@
               }
 
               if (!duplicate) {
+                // Sub-Pixel Corner Refinement for floating-point accuracy
+                let refinedCorners = refineCornersSubPix(grayMat, quadPts);
+
                 let srcQuadPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
-                  quadPts[0].x, quadPts[0].y,
-                  quadPts[1].x, quadPts[1].y,
-                  quadPts[2].x, quadPts[2].y,
-                  quadPts[3].x, quadPts[3].y
+                  refinedCorners[0].x, refinedCorners[0].y,
+                  refinedCorners[1].x, refinedCorners[1].y,
+                  refinedCorners[2].x, refinedCorners[2].y,
+                  refinedCorners[3].x, refinedCorners[3].y
                 ]);
 
                 let M = cv.getPerspectiveTransform(srcQuadPts, dstQuadPts);
@@ -496,10 +522,10 @@
 
                   let r = result.rotation;
                   let trueCorners = [
-                    quadPts[(0 + r) % 4],
-                    quadPts[(1 + r) % 4],
-                    quadPts[(2 + r) % 4],
-                    quadPts[(3 + r) % 4]
+                    refinedCorners[(0 + r) % 4],
+                    refinedCorners[(1 + r) % 4],
+                    refinedCorners[(2 + r) % 4],
+                    refinedCorners[(3 + r) % 4]
                   ];
 
                   detectedTags.push({
@@ -525,6 +551,34 @@
       console.error("Pipeline error:", err);
     } finally {
       requestAnimationFrame(processFrame);
+    }
+  }
+
+  // Refines integer corner points down to sub-pixel floating point precision
+  function refineCornersSubPix(gray, pts) {
+    try {
+      let cornerMat = cv.matFromArray(4, 1, cv.CV_32FC2, [
+        pts[0].x, pts[0].y,
+        pts[1].x, pts[1].y,
+        pts[2].x, pts[2].y,
+        pts[3].x, pts[3].y
+      ]);
+
+      let winSize = new cv.Size(4, 4);
+      let zeroZone = new cv.Size(-1, -1);
+      cv.cornerSubPix(gray, cornerMat, winSize, zeroZone, subpixCriteria);
+
+      let refined = [
+        { x: cornerMat.data32F[0], y: cornerMat.data32F[1] },
+        { x: cornerMat.data32F[2], y: cornerMat.data32F[3] },
+        { x: cornerMat.data32F[4], y: cornerMat.data32F[5] },
+        { x: cornerMat.data32F[6], y: cornerMat.data32F[7] }
+      ];
+
+      cornerMat.delete();
+      return refined;
+    } catch (e) {
+      return pts;
     }
   }
 
@@ -641,12 +695,10 @@
     return null;
   }
 
-  // Exact Mathematical Transformation from iPhone Camera to True Earth World Frame
   function computeWorldReferencedPose(R_tag_cam) {
     const deg2rad = Math.PI / 180.0;
     const rad2deg = 180.0 / Math.PI;
 
-    // 1. Phone-to-World Rotation Matrix (W3C standard Z-X'-Y'')
     const a = phoneAlpha * deg2rad;
     const b = phoneBeta * deg2rad;
     const g = phoneGamma * deg2rad;
@@ -661,15 +713,12 @@
          -cb*sg,            sb,       cb*cg
     ];
 
-    // 2. Rear Camera to Phone transformation (X: right, Y: down, Z: forward)
-    // R_cw = R_pw * R_cp
     const R_cw = [
        R_pw[0], -R_pw[1], -R_pw[2],
        R_pw[3], -R_pw[4], -R_pw[5],
        R_pw[6], -R_pw[7], -R_pw[8]
     ];
 
-    // 3. Tag-to-World Matrix = R_cw * R_tag_cam
     const R = R_tag_cam;
     const R_tw = new Array(9);
     for (let r = 0; r < 3; r++) {
@@ -680,22 +729,28 @@
       }
     }
 
-    // Tag's Face Normal in World Frame:
     const nx = R_tw[2], ny = R_tw[5], nz = R_tw[8];
 
-    // --- TRUE CAMBER (Wheel Tilt from True Plumb Vertical):
-    // In world frame, Z is Up (+1). A vertical wheel face has nz = 0.
+    // Raw physical values
     const rawCamber = Math.asin(Math.max(-1, Math.min(1, nz))) * rad2deg;
-
-    // --- TRUE TOE (Wheel Heading on True Horizontal Level Ground):
     const rawToe = Math.atan2(nx, ny) * rad2deg;
 
-    const camber = rawCamber - tareOffsets.camber;
-    const toe = rawToe - tareOffsets.toe;
+    const instantCamber = rawCamber - tareOffsets.camber;
+    const instantToe = rawToe - tareOffsets.toe;
+
+    // Adaptive Exponential Moving Average (EMA) Noise Filter
+    const filterAlpha = 0.12; // Smooth steady reading
+    if (filteredCamber === null) {
+      filteredCamber = instantCamber;
+      filteredToe = instantToe;
+    } else {
+      filteredCamber = filteredCamber * (1 - filterAlpha) + instantCamber * filterAlpha;
+      filteredToe = filteredToe * (1 - filterAlpha) + instantToe * filterAlpha;
+    }
 
     return {
-      camber: camber.toFixed(2),
-      toe: toe.toFixed(2),
+      camber: filteredCamber.toFixed(2),
+      toe: filteredToe.toFixed(2),
       rawCamber,
       rawToe
     };
@@ -739,20 +794,23 @@
       const angles = computeWorldReferencedPose(R.data64F);
       lastAngles = angles;
 
-      const distance = Math.hypot(tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]);
+      const rawDist = Math.hypot(tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]);
+      if (filteredDist === null) filteredDist = rawDist;
+      else filteredDist = filteredDist * 0.85 + rawDist * 0.15;
+
       const centerX = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
       const centerY = (c[0].y + c[1].y + c[2].y + c[3].y) / 4;
 
       drawTagOutline(c);
       draw3DAxes(rvec, tvec, s * 0.75);
-      drawOnScreenLabels(centerX, centerY, tag.id, angles, distance);
+      drawOnScreenLabels(centerX, centerY, tag.id, angles, filteredDist);
 
       telemetryHtml += `
         <div class="tag-block">
           <b style="color: #00e676;">Tag ID #${tag.id}</b>
           <div class="value-row"><span>True Camber (Vertical):</span> <span class="value-highlight">${angles.camber}°</span></div>
           <div class="value-row"><span>True Toe (Steer) &nbsp;&nbsp;&nbsp;:</span> <span class="value-highlight">${angles.toe}°</span></div>
-          <div class="value-row"><span>Distance &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</span> <span>${distance.toFixed(2)} m</span></div>
+          <div class="value-row"><span>Distance &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</span> <span>${filteredDist.toFixed(2)} m</span></div>
         </div>
       `;
 
