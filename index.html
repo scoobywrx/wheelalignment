@@ -2,122 +2,141 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>AprilTag Gravity-Locked Inclinometer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>AprilTag Wheel Alignment & Inclinometer</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    html, body {
+      width: 100%;
+      height: 100dvh;
+      max-height: 100dvh;
       background: #0d0d0d;
       color: #fff;
       overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
     #container {
       position: relative;
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      height: 100dvh;
       display: flex;
       justify-content: center;
       align-items: center;
+      background: #000;
     }
     video { display: none; }
     canvas {
-      width: 100vw;
-      height: 100vh;
-      object-fit: contain;
-      background: #000;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
     .hud {
       position: absolute;
-      top: 14px;
-      left: 14px;
-      background: rgba(10, 10, 10, 0.88);
-      backdrop-filter: blur(10px);
-      padding: 14px 18px;
+      top: max(12px, env(safe-area-inset-top));
+      left: 12px;
+      right: 12px;
+      background: rgba(12, 12, 12, 0.88);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 12px 14px;
       border-radius: 12px;
       font-size: 13px;
-      line-height: 1.5;
-      max-width: 350px;
+      line-height: 1.4;
       z-index: 10;
       border: 1px solid rgba(255, 255, 255, 0.18);
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.6);
+    }
+    .hud-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
     }
     .hud h1 {
       font-size: 14px;
-      margin-bottom: 4px;
       color: #00e676;
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
     .badge {
       display: inline-block;
-      padding: 2px 6px;
-      background: #00e676;
-      color: #111;
+      padding: 2px 7px;
+      background: #ff5252;
+      color: #fff;
       font-weight: bold;
       font-size: 10px;
       border-radius: 4px;
-      margin-bottom: 6px;
+    }
+    .badge.active {
+      background: #00e676;
+      color: #111;
     }
     .controls {
       position: absolute;
-      bottom: 18px;
+      bottom: max(16px, env(safe-area-inset-bottom));
       left: 50%;
       transform: translateX(-50%);
-      background: rgba(10, 10, 10, 0.88);
-      backdrop-filter: blur(10px);
-      padding: 8px 16px;
+      background: rgba(12, 12, 12, 0.90);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 8px 14px;
       border-radius: 30px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       z-index: 10;
-      border: 1px solid rgba(255, 255, 255, 0.18);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
+      white-space: nowrap;
     }
     .controls label {
-      font-size: 12px;
+      font-size: 11px;
       color: #ccc;
     }
     .controls input {
-      width: 50px;
-      padding: 4px 6px;
+      width: 48px;
+      padding: 4px 4px;
       background: #222;
       border: 1px solid #555;
       color: #fff;
       border-radius: 4px;
       text-align: center;
+      font-size: 12px;
     }
     .controls button {
       background: #00e676;
       border: none;
       color: #111;
-      padding: 6px 12px;
+      padding: 7px 12px;
       border-radius: 20px;
       cursor: pointer;
       font-size: 12px;
       font-weight: bold;
     }
+    .controls button.sensor-btn {
+      background: #ff9100;
+      color: #111;
+    }
     .controls button.tare-btn {
       background: #ffca28;
+      color: #111;
     }
-    .controls button:hover { opacity: 0.9; }
-    #status { font-weight: bold; color: #fbc02d; }
     .value-row {
       display: flex;
       justify-content: space-between;
       font-family: monospace;
       font-size: 13px;
-      margin: 3px 0;
+      margin: 2px 0;
     }
     .value-highlight {
       font-weight: bold;
       color: #00e676;
     }
     .tag-block {
-      margin-top: 8px;
-      padding: 8px 10px;
+      margin-top: 6px;
+      padding: 6px 8px;
       background: rgba(255, 255, 255, 0.06);
-      border-left: 4px solid #00e676;
+      border-left: 3px solid #00e676;
       border-radius: 4px;
     }
   </style>
@@ -130,18 +149,21 @@
   <canvas id="outputCanvas"></canvas>
 
   <div class="hud">
-    <h1>Gravity-Locked Alignment</h1>
-    <span id="imuStatus" class="badge">Gravity Sensor: Calibrating...</span>
-    <div>Status: <span id="status">Loading OpenCV...</span></div>
-    <div id="telemetry" style="margin-top: 8px; border-top: 1px solid #333; padding-top: 6px;">
+    <div class="hud-header">
+      <h1>AprilTag 36h11 Alignment</h1>
+      <span id="imuStatus" class="badge">Sensor: Tap Button Below</span>
+    </div>
+    <div>Status: <span id="status" style="font-weight: bold; color: #fbc02d;">Loading OpenCV...</span></div>
+    <div id="telemetry" style="margin-top: 6px; border-top: 1px solid #333; padding-top: 4px;">
       <i>Starting camera...</i>
     </div>
   </div>
 
   <div class="controls">
-    <label for="tagSize">Tag(mm):</label>
+    <label for="tagSize">Size(mm):</label>
     <input type="number" id="tagSize" value="100" min="10" max="1000" step="5">
-    <button id="tareBtn" class="tare-btn">Tare (Zero)</button>
+    <button id="sensorBtn" class="sensor-btn">Enable Sensor 🔒</button>
+    <button id="tareBtn" class="tare-btn">Tare</button>
     <button id="toggleCamera">Cam 🔄</button>
   </div>
 </div>
@@ -232,6 +254,7 @@
   const tagSizeInput = document.getElementById('tagSize');
   const toggleCamBtn = document.getElementById('toggleCamera');
   const tareBtn = document.getElementById('tareBtn');
+  const sensorBtn = document.getElementById('sensorBtn');
 
   let openCvReady = false;
   let stream = null;
@@ -239,54 +262,53 @@
   let videoDevices = [];
   let currentDeviceIndex = 0;
 
-  // Real-time Low-Pass Filtered Gravity Vector in Camera Coordinates
-  let gCam = [0.0, 1.0, 0.0];
-  let isGravityActive = false;
+  // IMU Hardware State (iOS Euler angles in degrees)
+  let phoneAlpha = 0.0, phoneBeta = 90.0, phoneGamma = 0.0;
+  let isSensorActive = false;
 
   // Tare Offsets
   let tareOffsets = { camber: 0.0, toe: 0.0 };
-  let lastMeasuredAngles = null;
+  let lastAngles = null;
 
   // OpenCV resources
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
   let cameraMatrix = null, distCoeffs = null, dstQuadPts = null;
 
-  // Initialize Phone Hardware Inclinometer (Accelerometer)
-  function initMotionSensors() {
-    if (typeof DeviceMotionEvent !== 'undefined') {
-      if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        // iOS 13+ permission request
-        document.body.addEventListener('click', () => {
-          DeviceMotionEvent.requestPermission().then(response => {
-            if (response === 'granted') startMotionListener();
-          }).catch(console.warn);
-        }, { once: true });
-      } else {
-        startMotionListener();
+  // Explicit iOS Sensor Permission Trigger
+  sensorBtn.onclick = async () => {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const res = await DeviceOrientationEvent.requestPermission();
+        if (res === 'granted') {
+          attachSensorListeners();
+        } else {
+          alert('Motion sensor permission denied.');
+        }
+      } catch (err) {
+        console.warn(err);
       }
+    } else {
+      attachSensorListeners();
     }
-  }
+  };
 
-  function startMotionListener() {
-    window.addEventListener('devicemotion', (e) => {
-      const acc = e.accelerationIncludingGravity;
-      if (acc && acc.x !== null) {
-        // Transform Phone IMU -> Rear Camera Optical Frame (X: right, Y: down, Z: forward)
-        const rawGx = -acc.x;
-        const rawGy = acc.y;
-        const rawGz = acc.z;
+  function attachSensorListeners() {
+    window.addEventListener('deviceorientation', (e) => {
+      if (e.beta !== null) {
+        phoneAlpha = e.alpha || 0.0;
+        phoneBeta = e.beta || 90.0;
+        phoneGamma = e.gamma || 0.0;
 
-        // Exponential smoothing filter (noise rejection)
-        const alpha = 0.15;
-        gCam[0] = gCam[0] * (1 - alpha) + rawGx * alpha;
-        gCam[1] = gCam[1] * (1 - alpha) + rawGy * alpha;
-        gCam[2] = gCam[2] * (1 - alpha) + rawGz * alpha;
-
-        isGravityActive = true;
-        imuStatusEl.innerText = "Gravity Sensor: Active 🔒";
-        imuStatusEl.style.background = "#00e676";
+        if (!isSensorActive) {
+          isSensorActive = true;
+          imuStatusEl.innerText = "Gravity Sensor: Locked 🔒";
+          imuStatusEl.className = "badge active";
+          sensorBtn.innerText = "Sensor Active ✅";
+          sensorBtn.style.background = "#444";
+          sensorBtn.style.color = "#fff";
+        }
       }
-    });
+    }, true);
   }
 
   function onOpenCvReady() {
@@ -294,7 +316,6 @@
       openCvReady = true;
       statusText.innerText = "Initializing Camera...";
       statusText.style.color = "#29b6f6";
-      initMotionSensors();
       initCameraList();
     };
   }
@@ -331,13 +352,12 @@
     try {
       let videoConstraints = {
         width: { ideal: 1280 },
-        height: { ideal: 720 }
+        height: { ideal: 720 },
+        facingMode: { ideal: "environment" }
       };
 
       if (videoDevices.length > 0 && videoDevices[currentDeviceIndex]) {
         videoConstraints.deviceId = { exact: videoDevices[currentDeviceIndex].deviceId };
-      } else {
-        videoConstraints.facingMode = { ideal: "environment" };
       }
 
       stream = await navigator.mediaDevices.getUserMedia({
@@ -354,7 +374,9 @@
 
         const w = canvas.width;
         const h = canvas.height;
-        const focalLength = Math.max(w, h);
+        
+        // Calibrated iPhone Camera Pinhole Model (approx 68 deg HFOV)
+        const focalLength = w * 0.82;
 
         if (cameraMatrix) cameraMatrix.delete();
         cameraMatrix = cv.matFromArray(3, 3, cv.CV_64F, [
@@ -384,7 +406,7 @@
           0, 79
         ]);
 
-        statusText.innerText = "Tracking Active";
+        statusText.innerText = "Tracking Active (Portrait)";
         statusText.style.color = "#00e676";
 
         if (!isLoopRunning) {
@@ -406,15 +428,15 @@
   };
 
   tareBtn.onclick = () => {
-    if (lastMeasuredAngles) {
+    if (lastAngles) {
       tareOffsets = {
-        camber: lastMeasuredAngles.rawCamber,
-        toe: lastMeasuredAngles.rawToe
+        camber: lastAngles.rawCamber,
+        toe: lastAngles.rawToe
       };
       tareBtn.innerText = "Reset Tare";
     } else {
       tareOffsets = { camber: 0.0, toe: 0.0 };
-      tareBtn.innerText = "Tare (Zero)";
+      tareBtn.innerText = "Tare";
     }
   };
 
@@ -619,42 +641,55 @@
     return null;
   }
 
-  // Fuses Optical Tag 3D Pose with Phone's Earth Gravity Vector
-  function computeGravityLockedAngles(R) {
-    const rad2deg = 180 / Math.PI;
+  // Exact Mathematical Transformation from iPhone Camera to True Earth World Frame
+  function computeWorldReferencedPose(R_tag_cam) {
+    const deg2rad = Math.PI / 180.0;
+    const rad2deg = 180.0 / Math.PI;
 
-    // Tag's Vertical Vector (pointing Down) in Camera Coordinates:
-    const vTag = [R[1], R[4], R[7]];
+    // 1. Phone-to-World Rotation Matrix (W3C standard Z-X'-Y'')
+    const a = phoneAlpha * deg2rad;
+    const b = phoneBeta * deg2rad;
+    const g = phoneGamma * deg2rad;
 
-    // Tag's Face Normal (pointing Out of Tag) in Camera Coordinates:
-    const nTag = [R[2], R[5], R[8]];
+    const ca = Math.cos(a), sa = Math.sin(a);
+    const cb = Math.cos(b), sb = Math.sin(b);
+    const cg = Math.cos(g), sg = Math.sin(g);
 
-    // Tag's Lateral Horizontal Vector:
-    const hTag = [R[0], R[3], R[6]];
-
-    // Gravity Vector (Normalized Earth Plumb Line):
-    const gLen = Math.hypot(gCam[0], gCam[1], gCam[2]) || 1.0;
-    const gNorm = [gCam[0] / gLen, gCam[1] / gLen, gCam[2] / gLen];
-
-    // --- TRUE CAMBER (Angle between Tag's Vertical Axis and True Earth Gravity) ---
-    const dotVG = vTag[0]*gNorm[0] + vTag[1]*gNorm[1] + vTag[2]*gNorm[2];
-    const rawCamberAngle = Math.acos(Math.max(-1, Math.min(1, dotVG))) * rad2deg;
-    
-    // Sign of Camber: Lean Outward (+) vs Inward (-) relative to the wheel face
-    const leanSign = (nTag[0]*gNorm[0] + nTag[1]*gNorm[1] + nTag[2]*gNorm[2]) >= 0 ? 1 : -1;
-    const rawCamber = leanSign * rawCamberAngle;
-
-    // --- TRUE TOE / AZIMUTH (Horizontal rotation on Earth's Level Ground Plane) ---
-    // Project tag normal onto the plane perpendicular to gravity:
-    const dotNG = nTag[0]*gNorm[0] + nTag[1]*gNorm[1] + nTag[2]*gNorm[2];
-    const nProj = [
-      nTag[0] - dotNG * gNorm[0],
-      nTag[1] - dotNG * gNorm[1],
-      nTag[2] - dotNG * gNorm[2]
+    const R_pw = [
+      ca*cg - sa*sb*sg, -sa*cb,  ca*sg + sa*sb*cg,
+      sa*cg + ca*sb*sg,  ca*cb,  sa*sg - ca*sb*cg,
+         -cb*sg,            sb,       cb*cg
     ];
-    const rawToe = Math.atan2(nProj[0], nProj[2]) * rad2deg;
 
-    // Apply Tare offsets
+    // 2. Rear Camera to Phone transformation (X: right, Y: down, Z: forward)
+    // R_cw = R_pw * R_cp
+    const R_cw = [
+       R_pw[0], -R_pw[1], -R_pw[2],
+       R_pw[3], -R_pw[4], -R_pw[5],
+       R_pw[6], -R_pw[7], -R_pw[8]
+    ];
+
+    // 3. Tag-to-World Matrix = R_cw * R_tag_cam
+    const R = R_tag_cam;
+    const R_tw = new Array(9);
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 3; c++) {
+        R_tw[r*3 + c] = R_cw[r*3 + 0] * R[0*3 + c] +
+                        R_cw[r*3 + 1] * R[1*3 + c] +
+                        R_cw[r*3 + 2] * R[2*3 + c];
+      }
+    }
+
+    // Tag's Face Normal in World Frame:
+    const nx = R_tw[2], ny = R_tw[5], nz = R_tw[8];
+
+    // --- TRUE CAMBER (Wheel Tilt from True Plumb Vertical):
+    // In world frame, Z is Up (+1). A vertical wheel face has nz = 0.
+    const rawCamber = Math.asin(Math.max(-1, Math.min(1, nz))) * rad2deg;
+
+    // --- TRUE TOE (Wheel Heading on True Horizontal Level Ground):
+    const rawToe = Math.atan2(nx, ny) * rad2deg;
+
     const camber = rawCamber - tareOffsets.camber;
     const toe = rawToe - tareOffsets.toe;
 
@@ -669,7 +704,7 @@
   function solveAndDrawTags(tags) {
     if (tags.length === 0) {
       telemetryEl.innerHTML = '<i>Searching for AprilTag 36h11...</i>';
-      lastMeasuredAngles = null;
+      lastAngles = null;
       return;
     }
 
@@ -701,8 +736,8 @@
       let R = new cv.Mat();
       cv.Rodrigues(rvec, R);
 
-      const angles = computeGravityLockedAngles(R.data64F);
-      lastMeasuredAngles = angles;
+      const angles = computeWorldReferencedPose(R.data64F);
+      lastAngles = angles;
 
       const distance = Math.hypot(tvec.data64F[0], tvec.data64F[1], tvec.data64F[2]);
       const centerX = (c[0].x + c[1].x + c[2].x + c[3].x) / 4;
@@ -716,7 +751,7 @@
         <div class="tag-block">
           <b style="color: #00e676;">Tag ID #${tag.id}</b>
           <div class="value-row"><span>True Camber (Vertical):</span> <span class="value-highlight">${angles.camber}°</span></div>
-          <div class="value-row"><span>True Toe (Horizontal):</span> <span class="value-highlight">${angles.toe}°</span></div>
+          <div class="value-row"><span>True Toe (Steer) &nbsp;&nbsp;&nbsp;:</span> <span class="value-highlight">${angles.toe}°</span></div>
           <div class="value-row"><span>Distance &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;:</span> <span>${distance.toFixed(2)} m</span></div>
         </div>
       `;
