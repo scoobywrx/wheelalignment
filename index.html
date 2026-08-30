@@ -285,7 +285,6 @@
   const tareBtn = document.getElementById('tareBtn');
   const sensorBtn = document.getElementById('sensorBtn');
 
-  // Load tag size (defaults to 95mm)
   if (localStorage.getItem('align_tag_size')) {
     tagSizeInput.value = localStorage.getItem('align_tag_size');
   }
@@ -294,7 +293,6 @@
     init3DObjectPoints();
   });
 
-  // Load lens profile (defaults to 0.650 for iPhone 14 Pro 24mm)
   let focalRatio = parseFloat(localStorage.getItem('align_lens_ratio')) || 0.650;
   lensProfileSelect.value = focalRatio.toFixed(3);
   lensProfileSelect.addEventListener('change', () => {
@@ -308,16 +306,13 @@
   let isLoopRunning = false;
   let currentFacingMode = 'environment';
 
-  // Gravity vector in phone camera coordinates (X: right, Y: down, Z: forward away from user)
   let gCam = [0.0, 9.80665, 0.0];
   let isSensorActive = false;
 
-  // EMA Filter state for stable 0.1° telemetry
   const tagFilterMap = new Map();
   let tareOffsets = { camber: 0.0, toe: 0.0 };
   let lastRawAngles = { camber: 0.0, toe: 0.0 };
 
-  // Frame timing
   let lastFpsTime = performance.now();
   let frameCount = 0;
 
@@ -379,9 +374,14 @@
     contours = new cv.MatVector();
     hierarchy = new cv.Mat();
 
-    subPixWinSize = new cv.Size(5, 5);
-    subPixZeroZone = new cv.Size(-1, -1);
-    subPixCriteria = new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 30, 0.02);
+    try {
+      subPixWinSize = new cv.Size(5, 5);
+      subPixZeroZone = new cv.Size(-1, -1);
+      // Bitmask: EPS (2) | COUNT (1) = 3
+      subPixCriteria = new cv.TermCriteria(3, 30, 0.02);
+    } catch (e) {
+      subPixCriteria = null;
+    }
 
     init3DObjectPoints();
   }
@@ -407,7 +407,6 @@
     const s = tagSizeMeters;
     const half = s / 2.0;
 
-    // Corner order: Top-Left, Top-Right, Bottom-Right, Bottom-Left
     objPoints = cv.matFromArray(4, 3, cv.CV_32F, [
       -half, -half, 0.0,
        half, -half, 0.0,
@@ -425,7 +424,6 @@
     projectedAxisPts = new cv.Mat();
   }
 
-  // Sensor Permission (iOS 13+)
   sensorBtn.onclick = async () => {
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
       try {
@@ -447,10 +445,6 @@
     window.addEventListener('devicemotion', (e) => {
       const acc = e.accelerationIncludingGravity;
       if (acc && acc.x !== null) {
-        // Physical reaction vector to camera coordinate mapping:
-        // acc.x: East (+X right). Camera +X is right -> rawGx = -acc.x
-        // acc.y: North (+Y top). Camera +Y is down -> rawGy = +acc.y
-        // acc.z: Front (+Z user). Camera +Z is away -> rawGz = +acc.z
         const rawGx = -acc.x;
         const rawGy = acc.y;
         const rawGz = acc.z;
@@ -557,8 +551,8 @@
         // RGBA -> Grayscale
         cv.cvtColor(srcMat, grayMat, cv.COLOR_RGBA2GRAY, 0);
 
-        // Fast adaptive thresholding
-        cv.adaptiveThreshold(grayMat, threshMat, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY_INV, 15, 5);
+        // Robust Gaussian adaptive thresholding (window=25, C=7)
+        cv.adaptiveThreshold(grayMat, threshMat, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 25, 7);
 
         cv.findContours(threshMat, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
@@ -612,25 +606,32 @@
                   processedCenters.push({ x: cx, y: cy });
                   const r = tagDecode.rotation;
 
-                  // Refine quad corners to sub-pixel accuracy
-                  const imgDataSubPix = imgPoints.data32F;
-                  for (let k = 0; k < 4; k++) {
-                    const mappedIdx = (k + r) % 4;
-                    imgDataSubPix[k * 2] = quadPts[mappedIdx].x;
-                    imgDataSubPix[k * 2 + 1] = quadPts[mappedIdx].y;
-                  }
-
-                  // High-precision sub-pixel corner refinement
-                  cv.cornerSubPix(grayMat, imgPoints, subPixWinSize, subPixZeroZone, subPixCriteria);
-
-                  const refinedCorners = [
-                    { x: imgDataSubPix[0], y: imgDataSubPix[1] },
-                    { x: imgDataSubPix[2], y: imgDataSubPix[3] },
-                    { x: imgDataSubPix[4], y: imgDataSubPix[5] },
-                    { x: imgDataSubPix[6], y: imgDataSubPix[7] }
+                  const trueCorners = [
+                    { x: quadPts[(0 + r) % 4].x, y: quadPts[(0 + r) % 4].y },
+                    { x: quadPts[(1 + r) % 4].x, y: quadPts[(1 + r) % 4].y },
+                    { x: quadPts[(2 + r) % 4].x, y: quadPts[(2 + r) % 4].y },
+                    { x: quadPts[(3 + r) % 4].x, y: quadPts[(3 + r) % 4].y }
                   ];
 
-                  detectedTags.push({ id: tagDecode.id, corners: refinedCorners });
+                  // Sub-pixel refinement with safe fallback
+                  try {
+                    if (subPixCriteria && subPixWinSize) {
+                      const imgDataSubPix = imgPoints.data32F;
+                      for (let k = 0; k < 4; k++) {
+                        imgDataSubPix[k * 2] = trueCorners[k].x;
+                        imgDataSubPix[k * 2 + 1] = trueCorners[k].y;
+                      }
+                      cv.cornerSubPix(grayMat, imgPoints, subPixWinSize, subPixZeroZone, subPixCriteria);
+                      for (let k = 0; k < 4; k++) {
+                        trueCorners[k].x = imgDataSubPix[k * 2];
+                        trueCorners[k].y = imgDataSubPix[k * 2 + 1];
+                      }
+                    }
+                  } catch (e) {
+                    // Fallback directly to polygon corners
+                  }
+
+                  detectedTags.push({ id: tagDecode.id, corners: trueCorners });
                 }
               }
             }
@@ -749,7 +750,6 @@
     const gLen = Math.hypot(gCam[0], gCam[1], gCam[2]) || 1.0;
     const gx = gCam[0] / gLen, gy = gCam[1] / gLen, gz = gCam[2] / gLen;
 
-    // Tag surface normal vector n = R[:, 2]
     const nx = R[2], ny = R[5], nz = R[8];
 
     // True Camber = Angle between Tag Normal and True Vertical Gravity Vector
