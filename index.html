@@ -294,7 +294,7 @@
     init3DObjectPoints();
   });
 
-  // Load lens profile (defaults to 0.650 for iPhone 14 Pro)
+  // Load lens profile (defaults to 0.650 for iPhone 14 Pro 24mm)
   let focalRatio = parseFloat(localStorage.getItem('align_lens_ratio')) || 0.650;
   lensProfileSelect.value = focalRatio.toFixed(3);
   lensProfileSelect.addEventListener('change', () => {
@@ -308,11 +308,11 @@
   let isLoopRunning = false;
   let currentFacingMode = 'environment';
 
-  // Gravity vector in phone camera coordinates (X: right, Y: down, Z: forward)
+  // Gravity vector in phone camera coordinates (X: right, Y: down, Z: forward away from user)
   let gCam = [0.0, 9.80665, 0.0];
   let isSensorActive = false;
 
-  // EMA Filter state for 0.1° telemetry with zero jitter
+  // EMA Filter state for stable 0.1° telemetry
   const tagFilterMap = new Map();
   let tareOffsets = { camber: 0.0, toe: 0.0 };
   let lastRawAngles = { camber: 0.0, toe: 0.0 };
@@ -321,7 +321,7 @@
   let lastFpsTime = performance.now();
   let frameCount = 0;
 
-  // Reusable OpenCV Mats & Buffers (Zero Allocation Steady-State Loop)
+  // Reusable OpenCV Mats & Buffers
   let srcMat = null, grayMat = null, threshMat = null, warpedMat = null;
   let cameraMatrix = null, distCoeffs = null;
   let dstQuadPts = null, srcQuadPts = null;
@@ -329,6 +329,7 @@
   let rvec = null, tvec = null, R_mat = null;
   let axisPoints3D = null, projectedAxisPts = null;
   let contours = null, hierarchy = null;
+  let subPixWinSize = null, subPixZeroZone = null, subPixCriteria = null;
 
   function initOpenCVMats(w, h) {
     if (srcMat) srcMat.delete();
@@ -377,6 +378,10 @@
 
     contours = new cv.MatVector();
     hierarchy = new cv.Mat();
+
+    subPixWinSize = new cv.Size(5, 5);
+    subPixZeroZone = new cv.Size(-1, -1);
+    subPixCriteria = new cv.TermCriteria(cv.TermCriteria_EPS + cv.TermCriteria_MAX_ITER, 30, 0.02);
 
     init3DObjectPoints();
   }
@@ -442,12 +447,15 @@
     window.addEventListener('devicemotion', (e) => {
       const acc = e.accelerationIncludingGravity;
       if (acc && acc.x !== null) {
-        // Accelerometer mapping for portrait orientation
+        // Physical reaction vector to camera coordinate mapping:
+        // acc.x: East (+X right). Camera +X is right -> rawGx = -acc.x
+        // acc.y: North (+Y top). Camera +Y is down -> rawGy = +acc.y
+        // acc.z: Front (+Z user). Camera +Z is away -> rawGz = +acc.z
         const rawGx = -acc.x;
         const rawGy = acc.y;
         const rawGz = acc.z;
 
-        const alpha = 0.25;
+        const alpha = 0.20;
         gCam[0] = gCam[0] * (1 - alpha) + rawGx * alpha;
         gCam[1] = gCam[1] * (1 - alpha) + rawGy * alpha;
         gCam[2] = gCam[2] * (1 - alpha) + rawGz * alpha;
@@ -531,7 +539,6 @@
     tagFilterMap.clear();
   };
 
-  // High-performance CV Loop
   function processFrame() {
     try {
       if (video.readyState >= 2 && openCvReady && srcMat) {
@@ -604,13 +611,26 @@
                 if (tagDecode !== null) {
                   processedCenters.push({ x: cx, y: cy });
                   const r = tagDecode.rotation;
-                  const trueCorners = [
-                    quadPts[(0 + r) % 4],
-                    quadPts[(1 + r) % 4],
-                    quadPts[(2 + r) % 4],
-                    quadPts[(3 + r) % 4]
+
+                  // Refine quad corners to sub-pixel accuracy
+                  const imgDataSubPix = imgPoints.data32F;
+                  for (let k = 0; k < 4; k++) {
+                    const mappedIdx = (k + r) % 4;
+                    imgDataSubPix[k * 2] = quadPts[mappedIdx].x;
+                    imgDataSubPix[k * 2 + 1] = quadPts[mappedIdx].y;
+                  }
+
+                  // High-precision sub-pixel corner refinement
+                  cv.cornerSubPix(grayMat, imgPoints, subPixWinSize, subPixZeroZone, subPixCriteria);
+
+                  const refinedCorners = [
+                    { x: imgDataSubPix[0], y: imgDataSubPix[1] },
+                    { x: imgDataSubPix[2], y: imgDataSubPix[3] },
+                    { x: imgDataSubPix[4], y: imgDataSubPix[5] },
+                    { x: imgDataSubPix[6], y: imgDataSubPix[7] }
                   ];
-                  detectedTags.push({ id: tagDecode.id, corners: trueCorners });
+
+                  detectedTags.push({ id: tagDecode.id, corners: refinedCorners });
                 }
               }
             }
@@ -701,7 +721,6 @@
       }
     }
 
-    // Exact rotation scanning
     for (let rot = 0; rot < 4; rot++) {
       let code = 0n;
       for (let r = 0; r < 6; r++) {
@@ -730,14 +749,14 @@
     const gLen = Math.hypot(gCam[0], gCam[1], gCam[2]) || 1.0;
     const gx = gCam[0] / gLen, gy = gCam[1] / gLen, gz = gCam[2] / gLen;
 
-    // Normal vector n = R[:, 2] (pointing straight out from tag surface)
+    // Tag surface normal vector n = R[:, 2]
     const nx = R[2], ny = R[5], nz = R[8];
 
-    // True Camber = Angle between Tag Normal and Ground Gravity Vector
+    // True Camber = Angle between Tag Normal and True Vertical Gravity Vector
     const dotNG = nx * gx + ny * gy + nz * gz;
     const rawCamber = -Math.asin(Math.max(-1.0, Math.min(1.0, dotNG))) * rad2deg;
 
-    // True Toe = Horizontal angle relative to optical forward axis
+    // True Toe = Horizontal angle relative to optical axis
     const rawToe = Math.atan2(nx, nz) * rad2deg;
 
     lastRawAngles.camber = rawCamber;
@@ -755,7 +774,7 @@
     }
 
     const state = tagFilterMap.get(tagId);
-    const alpha = 0.40;
+    const alpha = 0.35;
 
     state.camber = state.camber * (1 - alpha) + rawCamber * alpha;
     state.toe = state.toe * (1 - alpha) + rawToe * alpha;
